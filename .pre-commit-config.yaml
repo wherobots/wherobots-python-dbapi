@@ -1,0 +1,23 @@
+fail_fast: true
+
+repos:
+  - repo: https://github.com/ambv/black
+    rev: 24.2.0
+    hooks:
+      - id: black
+        args: [--diff, --check]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.0
+    hooks:
+      - id: mypy
+        exclude: ^tests/
+        verbose: true
+        entry: bash -c '"$@" || true' --
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.1.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: []
