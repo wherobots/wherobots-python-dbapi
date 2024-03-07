@@ -3,14 +3,8 @@
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from _typeshed.dbapi import DBAPIConnection
 import requests
 import websockets
-
-import errors
 
 
 apilevel = "2.0"
@@ -20,6 +14,7 @@ paramstyle = "pyformat"
 
 DEFAULT_ENDPOINT = "api.wherobots.services"  # "api.cloud.wherobots.com"
 STAGING_ENDPOINT = "api.staging.wherobots.services"  # "api.staging.wherobots.com"
+DEFAULT_RUNTIME = "sedona"
 DEFAULT_REGION = "aws-us-west-2"
 
 
@@ -29,7 +24,7 @@ def connect(
     api_key: str = None,
     runtime: str = DEFAULT_RUNTIME,
     region: str = DEFAULT_REGION,
-) -> DBAPIConnection:
+):
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
     if token and api_key:
@@ -54,7 +49,7 @@ def connect(
     return WherobotsSession(ws=websockets.connect(ws_uri))
 
 
-class WherobotsSession(DBAPIConnection):
+class WherobotsSession:
 
     def __init__(self, ws):
         self.__ws = ws
