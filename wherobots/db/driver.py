@@ -3,8 +3,14 @@
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
+from contextlib import contextmanager
+import logging
 import requests
 import websockets
+
+from .constants import DEFAULT_ENDPOINT, DEFAULT_REGION, DEFAULT_RUNTIME
+from .region import Region
+from .runtime import Runtime
 
 
 apilevel = "2.0"
@@ -12,18 +18,13 @@ threadsafety = 1
 paramstyle = "pyformat"
 
 
-DEFAULT_ENDPOINT = "api.wherobots.services"  # "api.cloud.wherobots.com"
-STAGING_ENDPOINT = "api.staging.wherobots.services"  # "api.staging.wherobots.com"
-DEFAULT_RUNTIME = "sedona"
-DEFAULT_REGION = "aws-us-west-2"
-
-
+@contextmanager
 def connect(
     host: str = DEFAULT_ENDPOINT,
     token: str = None,
     api_key: str = None,
-    runtime: str = DEFAULT_RUNTIME,
-    region: str = DEFAULT_REGION,
+    runtime: Runtime = DEFAULT_RUNTIME,
+    region: Region = DEFAULT_REGION,
 ):
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -36,9 +37,17 @@ def connect(
     elif api_key:
         headers["X-API-Key"] = api_key
 
+    logging.info(
+        "Requesting %s/%s runtime in %s from %s ...",
+        runtime.name,
+        runtime.value,
+        region.value,
+        host,
+    )
+
     resp = requests.post(
         url=f"https://{host}/sql/session",
-        params={"runtime": runtime, "region": region},
+        params={"runtime": runtime.value, "region": region.value},
         headers=headers,
     )
     resp.raise_for_status()
@@ -46,7 +55,12 @@ def connect(
     ws_uri = resp.json().get("uri")
     if not ws_uri:
         raise errors.InterfaceError("Could not acquire SQL session")
-    return WherobotsSession(ws=websockets.connect(ws_uri))
+
+    session = WherobotsSession(ws=websockets.connect(ws_uri))
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 class WherobotsSession:
@@ -55,7 +69,7 @@ class WherobotsSession:
         self.__ws = ws
 
     def close(self):
-        pass
+        self.__ws.close()
 
     def commit(self):
         raise errors.NotSupportedError
