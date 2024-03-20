@@ -56,14 +56,14 @@ def connect(
     if not ws_uri:
         raise errors.InterfaceError("Could not acquire SQL session")
 
-    session = WherobotsSession(ws=websockets.connect(ws_uri))
+    session = Session(ws=websockets.connect(ws_uri))
     try:
         yield session
     finally:
         session.close()
 
 
-class WherobotsSession:
+class Session:
 
     def __init__(self, ws):
         self.__ws = ws
@@ -78,4 +78,55 @@ class WherobotsSession:
         raise errors.NotSupportedError
 
     def cursor(self):
-        raise errors.NotSupportedError
+        return Cursor(self)
+
+
+class Cursor:
+
+    def __init__(self, session):
+        self.__session = session
+
+        # Description and row count are set by the last executed operation.
+        # Their default values are defined by PEP-0249.
+        self.__description = None
+        self.__rowcount = -1
+
+        self.arraysize = 1
+
+    @property
+    def connection(self):
+        return self.__session
+
+    @property
+    def description(self):
+        return self.__description
+
+    @property
+    def rowcount(self):
+        return self.__rowcount
+
+    def close(self):
+        pass
+
+    def execute(self, operation, parameters=None):
+        raise NotImplementedError
+
+    def executemany(self, operation, seq_of_parameters):
+        for parameters in seq_of_parameters:
+            self.execute(operation, parameters)
+
+    def fetchone(self):
+        raise NotImplementedError
+
+    def fetchmany(self, size=None):
+        size = size or self.arraysize
+        raise NotImplementedError
+
+    def fetchall(self):
+        raise NotImplementedError
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise StopIteration
