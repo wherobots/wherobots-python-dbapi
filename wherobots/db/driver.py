@@ -6,9 +6,21 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 from contextlib import contextmanager
 import logging
 import requests
+import tenacity
 import websockets
 
-from .constants import DEFAULT_ENDPOINT, DEFAULT_REGION, DEFAULT_RUNTIME
+from .constants import (
+    DEFAULT_ENDPOINT,
+    DEFAULT_REGION,
+    DEFAULT_RUNTIME,
+    DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+)
+from .errors import (
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 from .region import Region
 from .runtime import Runtime
 
@@ -25,6 +37,7 @@ def connect(
     api_key: str = None,
     runtime: Runtime = DEFAULT_RUNTIME,
     region: Region = DEFAULT_REGION,
+    wait_timeout_seconds: int = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
 ):
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -45,17 +58,49 @@ def connect(
         host,
     )
 
+    # Default to HTTPS if the hostname doesn't explicitly specify a scheme.
+    if not host.startswith("http:"):
+        host = f"https://{host}"
+
     resp = requests.post(
-        url=f"https://{host}/sql/session",
-        params={"runtime": runtime.value, "region": region.value},
+        url=f"{host}/sql/session",
+        params={"region": region.value},
+        json={"runtimeId": runtime.value},
         headers=headers,
     )
     resp.raise_for_status()
 
-    ws_uri = resp.json().get("uri")
-    if not ws_uri:
-        raise errors.InterfaceError("Could not acquire SQL session")
+    # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
+    # session is in READY state.
+    session_id_url = resp.url
 
+    @tenacity.retry(
+        stop=tenacity.stop_after_delay(wait_timeout_seconds),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
+        retry=tenacity.retry_if_not_exception_type(
+            (requests.HTTPError, OperationalError)
+        ),
+    )
+    def get_session_ws_uri():
+        r = requests.get(session_id_url, headers=headers)
+        r.raise_for_status()
+        payload = r.json()
+        status = payload.get("status")
+        logging.debug("Polled %s; status: %s", session_id_url, status)
+        if status in ("REQUESTED", "DEPLOYING", "DEPLOYED", "INITIALIZING"):
+            raise tenacity.TryAgain("SQL Session is not ready yet")
+        elif status == "READY":
+            return payload["appMeta"]["url"]
+        else:
+            logging.error("SQL session creation failed: %s; should not retry.", status)
+            raise OperationalError(f"Failed to create SQL session: {status}")
+
+    try:
+        ws_uri = get_session_ws_uri()
+    except Exception as e:
+        raise InterfaceError("Could not acquire SQL session", e)
+
+    logging.info("Connecting to session at %s", ws_uri)
     session = Session(ws=websockets.connect(ws_uri))
     try:
         yield session
@@ -72,10 +117,10 @@ class Session:
         self.__ws.close()
 
     def commit(self):
-        raise errors.NotSupportedError
+        raise NotSupportedError
 
     def rollback(self):
-        raise errors.NotSupportedError
+        raise NotSupportedError
 
     def cursor(self):
         return Cursor(self)
