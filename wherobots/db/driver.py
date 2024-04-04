@@ -3,8 +3,11 @@
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
+import uuid
 from contextlib import contextmanager
 import logging
+from typing import Any
+
 import requests
 import tenacity
 import websockets
@@ -123,52 +126,84 @@ class Session:
         raise NotSupportedError
 
     def cursor(self):
-        return Cursor(self)
+        return Cursor(self.__ws.send, self.__ws.recv)
 
 
 class Cursor:
 
-    def __init__(self, session):
-        self.__session = session
+    def __init__(self, send_func, recv_func):
+        self.__send_func = send_func
+        self.__recv_func = recv_func
+
+        self.__current_execution_id: str | None = None
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
-        self.__description = None
-        self.__rowcount = -1
+        self.__description: str | None = None
+        self.__rowcount: int = -1
 
-        self.arraysize = 1
-
-    @property
-    def connection(self):
-        return self.__session
+        # Array-size is also defined by PEP-0249 and is expected to be read/writable.
+        self.arraysize: int = 1
 
     @property
-    def description(self):
+    def description(self) -> str | None:
         return self.__description
 
     @property
-    def rowcount(self):
+    def rowcount(self) -> int:
         return self.__rowcount
 
     def close(self):
         pass
 
-    def execute(self, operation, parameters=None):
-        raise NotImplementedError
+    def execute(self, operation: str, parameters: dict[str, Any] = None):
+        self.__current_execution_id = uuid.uuid4()
 
-    def executemany(self, operation, seq_of_parameters):
-        for parameters in seq_of_parameters:
-            self.execute(operation, parameters)
+        sql = operation.format(**(parameters or {}))
+        exec_request = {
+            "kind": "execute_sql",
+            "execution_id": self.__current_execution_id,
+            "statement": sql,
+        }
+        logging.debug("Sending: %s", exec_request)
+        self.__send_func(exec_request)
+
+        results_request = {
+            "kind": "retrieve_results",
+            "execution_id": self.__current_execution_id,
+            "results_format": "json",
+        }
+        logging.debug("Sending: %s", exec_request)
+        self.__send_func(results_request)
+
+    def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
+        raise NotImplementedError
 
     def fetchone(self):
+        if not self.__current_execution_id:
+            raise ProgrammingError("No query has been executed yet")
         raise NotImplementedError
 
-    def fetchmany(self, size=None):
+    def fetchmany(self, size: int = None):
         size = size or self.arraysize
-        raise NotImplementedError
+        # TODO: evaluate if optimizations are possible here based on results encoding.
+        rows = []
+        while len(rows) < size:
+            row = self.fetchone()
+            if row is None:
+                break
+            rows.append(row)
+        return rows
 
     def fetchall(self):
-        raise NotImplementedError
+        result = []
+        while True:
+            size = self.arraysize
+            rows = self.fetchmany(size)
+            result.extend(rows)
+            if len(rows) < size:
+                break
+        return result
 
     def __iter__(self):
         return self
