@@ -19,6 +19,12 @@ if __name__ == "__main__":
         api_key = f.read().strip()
 
     with connect(
-        api_key=api_key, runtime=Runtime.NEW_YORK, region=Region.AWS_US_WEST_2
+        host="api.staging.wherobots.services",
+        api_key=api_key,
+        runtime=Runtime.SEDONA,
+        region=Region.AWS_US_WEST_2,
     ) as conn:
-        pass
+        cursor = conn.cursor()
+        cursor.execute("SHOW tables IN wherobots_open_data.overture")
+        for row in cursor.fetchall():
+            print(row)
