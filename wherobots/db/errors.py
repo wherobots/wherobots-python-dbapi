@@ -1,11 +1,4 @@
-import exceptions
-
-
-class Error(exceptions.StandardError):
-    pass
-
-
-class Warning(exceptions.StandardError):
+class Error(Exception):
     pass
 
 
