@@ -15,6 +15,7 @@ Tracker = "https://github.com/wherobots/wherobots-python-dbapi-driver/issues"
 python = "^3.11"
 requests = "^2.31.0"
 websockets = "^12.0"
+tenacity = "^8.2.3"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.8.0"
