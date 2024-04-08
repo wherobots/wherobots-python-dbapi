@@ -1,1 +1,1 @@
-from .driver import connect
+from .driver import connect, connect_direct

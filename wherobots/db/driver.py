@@ -3,14 +3,16 @@
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
+import json
+import logging
+import urllib.parse
 import uuid
 from contextlib import contextmanager
-import logging
 from typing import Any
 
 import requests
 import tenacity
-import websockets
+import websockets.sync.client
 
 from .constants import (
     DEFAULT_ENDPOINT,
@@ -26,7 +28,6 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
-
 
 apilevel = "2.0"
 threadsafety = 1
@@ -84,12 +85,12 @@ def connect(
             (requests.HTTPError, OperationalError)
         ),
     )
-    def get_session_ws_uri():
+    def get_session_uri():
         r = requests.get(session_id_url, headers=headers)
         r.raise_for_status()
         payload = r.json()
         status = payload.get("status")
-        logging.debug("Polled %s; status: %s", session_id_url, status)
+        logging.info(" ... %s", status)
         if status in ("REQUESTED", "DEPLOYING", "DEPLOYED", "INITIALIZING"):
             raise tenacity.TryAgain("SQL Session is not ready yet")
         elif status == "READY":
@@ -99,12 +100,30 @@ def connect(
             raise OperationalError(f"Failed to create SQL session: {status}")
 
     try:
-        ws_uri = get_session_ws_uri()
+        logging.info("Getting SQL session status from %s ...", session_id_url)
+        session_uri = get_session_uri()
     except Exception as e:
-        raise InterfaceError("Could not acquire SQL session", e)
+        raise InterfaceError("Could not acquire SQL session!", e)
 
-    logging.info("Connecting to session at %s", ws_uri)
-    session = Session(ws=websockets.connect(ws_uri))
+    yield from connect_direct(http_to_ws(session_uri), headers)
+
+
+def http_to_ws(uri: str) -> str:
+    parsed = urllib.parse.urlparse(uri)
+    for from_scheme, to_scheme in [("http", "ws"), ("https", "wss")]:
+        if parsed.scheme == from_scheme:
+            parsed = parsed._replace(scheme=to_scheme)
+    return str(urllib.parse.urlunparse(parsed))
+
+
+@contextmanager
+def connect_direct(
+    uri: str,
+    headers: dict[str, str] = None,
+):
+    logging.info("Connecting to SQL session at %s ...", uri)
+    connection = websockets.sync.client.connect(uri=uri, additional_headers=headers)
+    session = Session(ws=connection)
     try:
         yield session
     finally:
@@ -136,6 +155,7 @@ class Cursor:
         self.__recv_func = recv_func
 
         self.__current_execution_id: str | None = None
+        self.__current_execution_state: str | None = None
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
@@ -156,25 +176,21 @@ class Cursor:
     def close(self):
         pass
 
+    def __send_request(self, request):
+        self.__send_func(json.dumps(request))
+
     def execute(self, operation: str, parameters: dict[str, Any] = None):
-        self.__current_execution_id = uuid.uuid4()
+        self.__current_execution_id = str(uuid.uuid4())
+        self.__current_execution_state = "requested"
 
         sql = operation.format(**(parameters or {}))
+        logging.info("Executing SQL: %s", sql)
         exec_request = {
             "kind": "execute_sql",
             "execution_id": self.__current_execution_id,
             "statement": sql,
         }
-        logging.debug("Sending: %s", exec_request)
-        self.__send_func(exec_request)
-
-        results_request = {
-            "kind": "retrieve_results",
-            "execution_id": self.__current_execution_id,
-            "results_format": "json",
-        }
-        logging.debug("Sending: %s", exec_request)
-        self.__send_func(results_request)
+        self.__send_request(exec_request)
 
     def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
         raise NotImplementedError
