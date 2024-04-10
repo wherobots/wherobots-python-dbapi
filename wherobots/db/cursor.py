@@ -19,7 +19,9 @@ class Cursor:
         self.__current_execution_results: Future[list[Any]] | None = None
         self.__current_row: int = 0
 
-        self.__executor = ThreadPoolExecutor(max_workers=1)
+        self.__executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="wherobots-sql-cursor"
+        )
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
@@ -38,7 +40,7 @@ class Cursor:
         return self.__rowcount
 
     def close(self):
-        pass
+        self.__executor.shutdown()
 
     def __send_request(self, request):
         return self.__send_func(json.dumps(request))
@@ -95,8 +97,8 @@ class Cursor:
                     self.__current_execution_state = ExecutionState[
                         response["state"].upper()
                     ]
-                    logging.debug(
-                        "Query %s %s.",
+                    logging.info(
+                        "Query %s is %s.",
                         self.__current_execution_id,
                         self.__current_execution_state,
                     )
@@ -108,6 +110,10 @@ class Cursor:
                                 "execution_id": self.__current_execution_id,
                                 "results_format": "json",
                             }
+                            logging.info(
+                                "Requesting results from %s ...",
+                                self.__current_execution_id,
+                            )
                             self.__send_request(results_request)
                             self.__current_execution_state = (
                                 ExecutionState.RESULTS_REQUESTED
@@ -117,6 +123,11 @@ class Cursor:
                 case EventKind.EXECUTION_RESULT:
                     self.__current_execution_state = ExecutionState.COMPLETED
                     results_format = response["results_format"]
+                    logging.info(
+                        "Received %s results from %s.",
+                        results_format,
+                        self.__current_execution_id,
+                    )
                     if results_format != "json":
                         raise OperationalError(
                             f"Unsupported results format {results_format}"

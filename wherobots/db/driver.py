@@ -5,8 +5,6 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 
 import logging
 import urllib.parse
-from contextlib import contextmanager
-
 import requests
 import tenacity
 import websockets.sync.client
@@ -31,7 +29,6 @@ threadsafety = 1
 paramstyle = "pyformat"
 
 
-@contextmanager
 def connect(
     host: str = DEFAULT_ENDPOINT,
     token: str = None,
@@ -102,7 +99,7 @@ def connect(
     except Exception as e:
         raise InterfaceError("Could not acquire SQL session!", e)
 
-    yield from connect_direct(http_to_ws(session_uri), headers)
+    return connect_direct(http_to_ws(session_uri), headers)
 
 
 def http_to_ws(uri: str) -> str:
@@ -113,18 +110,11 @@ def http_to_ws(uri: str) -> str:
     return str(urllib.parse.urlunparse(parsed))
 
 
-@contextmanager
-def connect_direct(
-    uri: str,
-    headers: dict[str, str] = None,
-):
+def connect_direct(uri: str, headers: dict[str, str] = None):
     logging.info("Connecting to SQL session at %s ...", uri)
     connection = websockets.sync.client.connect(uri=uri, additional_headers=headers)
     session = Session(ws=connection)
-    try:
-        yield session
-    finally:
-        session.close()
+    return session
 
 
 class Session:
@@ -137,6 +127,12 @@ class Session:
 
     def __init__(self, ws):
         self.__ws = ws
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def close(self):
         self.__ws.close()
