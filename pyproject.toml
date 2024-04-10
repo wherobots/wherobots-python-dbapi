@@ -24,6 +24,7 @@ black = "^24.2.0"
 pre-commit = "^3.6.2"
 conventional-pre-commit = "^3.1.0"
 shapely = "^2.0.3"
+tabulate = "^0.9.0"
 
 [build-system]
 requires = ["poetry-core"]

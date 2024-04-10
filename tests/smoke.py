@@ -7,7 +7,7 @@ from contextlib import closing
 
 import shapely
 import sys
-import yaml
+import tabulate
 
 from wherobots.db import connect, connect_direct
 from wherobots.db.runtime import Runtime
@@ -69,4 +69,4 @@ if __name__ == "__main__":
             if "geometry" in key:
                 row[key] = shapely.to_geojson(shapely.from_wkt(value))
 
-    print(yaml.dump(results, indent=2, allow_unicode=True))
+    print(tabulate.tabulate(results, headers="keys", tablefmt="rounded_outline"))
