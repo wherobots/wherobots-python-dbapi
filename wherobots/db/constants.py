@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import StrEnum, auto
 
 from .region import Region
 from .runtime import Runtime
@@ -11,37 +11,37 @@ DEFAULT_REGION = Region.AWS_US_WEST_2
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS = 300
 
 
-class ExecutionState(Enum):
-    IDLE = "idle"
+class ExecutionState(StrEnum):
+    IDLE = auto()
     "Not executing any operation."
 
-    EXECUTION_REQUESTED = "requested"
+    EXECUTION_REQUESTED = auto()
     "Execution of a query has been requested by the driver."
 
-    RUNNING = "running"
+    RUNNING = auto()
     "The SQL session has reported the query is running."
 
-    SUCCEEDED = "succeeded"
+    SUCCEEDED = auto()
     "The SQL session has reported the query has completed successfully."
 
-    FAILED = "failed"
+    FAILED = auto()
     "The SQL session has reported the query has failed."
 
-    RESULTS_REQUESTED = "results_requested"
+    RESULTS_REQUESTED = auto()
     "The driver has requested the query results from the SQL session."
 
-    COMPLETED = "completed"
+    COMPLETED = auto()
     "The driver has completed processing the query results."
 
     def is_terminal_state(self):
         return self in (ExecutionState.COMPLETED, ExecutionState.FAILED)
 
 
-class RequestKind(Enum):
-    EXECUTE_SQL = "execute_sql"
-    RETRIEVE_RESULTS = "retrieve_results"
+class RequestKind(StrEnum):
+    EXECUTE_SQL = auto()
+    RETRIEVE_RESULTS = auto()
 
 
-class EventKind(Enum):
-    STATE_UPDATED = "state_updated"
-    EXECUTION_RESULT = "execution_result"
+class EventKind(StrEnum):
+    STATE_UPDATED = auto()
+    EXECUTION_RESULT = auto()

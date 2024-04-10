@@ -56,7 +56,7 @@ class Cursor:
 
         sql = operation.format(**(parameters or {}))
         exec_request = {
-            "kind": RequestKind.EXECUTE_SQL,
+            "kind": RequestKind.EXECUTE_SQL.value,
             "execution_id": self.__current_execution_id,
             "statement": sql,
         }
@@ -89,9 +89,12 @@ class Cursor:
             response = json.loads(self.__recv_func())
             logging.debug("Received response: %s", response)
 
-            match response["kind"]:
+            kind = EventKind[response["kind"].upper()]
+            match kind:
                 case EventKind.STATE_UPDATED:
-                    self.__current_execution_state = response["state"]
+                    self.__current_execution_state = ExecutionState[
+                        response["state"].upper()
+                    ]
                     logging.debug(
                         "Query %s %s.",
                         self.__current_execution_id,
@@ -101,7 +104,7 @@ class Cursor:
                     match self.__current_execution_state:
                         case ExecutionState.SUCCEEDED:
                             results_request = {
-                                "kind": "retrieve_results",
+                                "kind": RequestKind.RETRIEVE_RESULTS.value,
                                 "execution_id": self.__current_execution_id,
                                 "results_format": "json",
                             }
@@ -118,7 +121,8 @@ class Cursor:
                         raise OperationalError(
                             f"Unsupported results format {results_format}"
                         )
-                    return json.loads(response["results"])
+                    # TODO: When full results are sent, we won't need to wrap them in a list to simulate a row.
+                    return [json.loads(response["results"])]
 
     def fetchone(self):
         results = self.__get_results()[self.__current_row :]
