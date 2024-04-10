@@ -1,7 +1,10 @@
 # A simple smoke test for the DB driver.
 
 import argparse
+import functools
 import logging
+from contextlib import closing
+
 import shapely
 import sys
 import yaml
@@ -9,25 +12,6 @@ import yaml
 from wherobots.db import connect, connect_direct
 from wherobots.db.runtime import Runtime
 from wherobots.db.region import Region
-
-
-def execute(conn):
-    cursor = conn.cursor()
-    cursor.execute(
-        """SELECT
-             categories.main AS category,
-             names.common[0].value AS name,
-             ST_AsEWKT(geometry) AS wkt_geometry
-           FROM
-             wherobots_open_data.overture.places_place
-        """
-    )
-    results = cursor.fetchall()
-    for row in results:
-        for key, value in row.items():
-            if key == "wkt_geometry":
-                row[key] = shapely.to_geojson(shapely.from_wkt(value))
-    print(yaml.dump(results, indent=2, allow_unicode=True))
 
 
 if __name__ == "__main__":
@@ -41,35 +25,48 @@ if __name__ == "__main__":
         const=logging.DEBUG,
         default=logging.INFO,
     )
-    parser.add_argument("direct_url", help="Direct URL to connect to", nargs="?")
+    parser.add_argument("--ws-url", help="Direct URL to connect to")
+    parser.add_argument("sql", help="SQL query to execute")
     args = parser.parse_args()
 
     logging.basicConfig(stream=sys.stdout, level=args.debug)
     logging.getLogger("websockets.protocol").setLevel(args.debug)
 
     api_key = None
+    token = None
+    headers = None
+
     if args.api_key_file:
         with open(args.api_key_file) as f:
             api_key = f.read().strip()
+        headers = {"X-API-Key": api_key}
 
-    token = None
     if args.token_file:
         with open(args.token_file) as f:
             token = f.read().strip()
+        headers = {"Authorization": f"Bearer {token}"}
 
-    if args.direct_url:
-        headers = (
-            {"Authorization": f"Bearer {token}"} if token else {"X-API-Key": api_key}
-        )
-        with connect_direct(uri=args.direct_url, headers=headers) as conn:
-            execute(conn)
+    if args.ws_url:
+        conn_func = functools.partial(connect_direct, uri=args.ws_url, headers=headers)
     else:
-        with connect(
+        conn_func = functools.partial(
+            connect,
             host="api.staging.wherobots.services",
             token=token,
             api_key=api_key,
             runtime=Runtime.SEDONA,
             region=Region.AWS_US_WEST_2,
             wait_timeout_seconds=900,
-        ) as conn:
-            execute(conn)
+        )
+
+    with conn_func() as conn:
+        with closing(conn.cursor()) as cursor:
+            cursor.execute(args.sql)
+            results = cursor.fetchall()
+
+    for row in results:
+        for key, value in row.items():
+            if "geometry" in key:
+                row[key] = shapely.to_geojson(shapely.from_wkt(value))
+
+    print(yaml.dump(results, indent=2, allow_unicode=True))
