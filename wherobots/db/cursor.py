@@ -2,7 +2,7 @@ from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 import json
 import logging
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from .constants import ExecutionState, RequestKind, EventKind
 from .errors import ProgrammingError, OperationalError
@@ -10,7 +10,7 @@ from .errors import ProgrammingError, OperationalError
 
 class Cursor:
 
-    def __init__(self, send_func, recv_func):
+    def __init__(self, send_func: Callable[[str], None], recv_func: Callable[[], str]):
         self.__send_func = send_func
         self.__recv_func = recv_func
 
@@ -49,6 +49,7 @@ class Cursor:
         self.__current_execution_id = str(uuid.uuid4())
         self.__current_execution_state = ExecutionState.EXECUTION_REQUESTED
         self.__current_row = 0
+        self.__rowcount = -1
 
         def _execute(request):
             """This function is executed in a separate thread to send the request, wait for, and gather the results."""
@@ -133,6 +134,7 @@ class Cursor:
                             f"Unsupported results format {results_format}"
                         )
                     # TODO: When full results are sent, we won't need to wrap them in a list to simulate a row.
+                    self.__rowcount = 1
                     return [json.loads(response["results"])]
 
     def fetchone(self):

@@ -15,14 +15,13 @@ from .constants import (
     DEFAULT_RUNTIME,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
 )
-from .cursor import Cursor
 from .errors import (
     InterfaceError,
-    NotSupportedError,
     OperationalError,
 )
 from .region import Region
 from .runtime import Runtime
+from .session import Session
 
 apilevel = "2.0"
 threadsafety = 1
@@ -36,7 +35,7 @@ def connect(
     runtime: Runtime = DEFAULT_RUNTIME,
     region: Region = DEFAULT_REGION,
     wait_timeout_seconds: int = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
-):
+) -> Session:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
     if token and api_key:
@@ -60,13 +59,16 @@ def connect(
     if not host.startswith("http:"):
         host = f"https://{host}"
 
-    resp = requests.post(
-        url=f"{host}/sql/session",
-        params={"region": region.value},
-        json={"runtimeId": runtime.value},
-        headers=headers,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.post(
+            url=f"{host}/sql/session",
+            params={"region": region.value},
+            json={"runtimeId": runtime.value},
+            headers=headers,
+        )
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise InterfaceError("Failed to create SQL session!", e)
 
     # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
     # session is in READY state.
@@ -79,7 +81,7 @@ def connect(
             (requests.HTTPError, OperationalError)
         ),
     )
-    def get_session_uri():
+    def get_session_uri() -> str:
         r = requests.get(session_id_url, headers=headers)
         r.raise_for_status()
         payload = r.json()
@@ -103,6 +105,7 @@ def connect(
 
 
 def http_to_ws(uri: str) -> str:
+    """Converts an HTTP URI to a WebSocket URI."""
     parsed = urllib.parse.urlparse(uri)
     for from_scheme, to_scheme in [("http", "ws"), ("https", "wss")]:
         if parsed.scheme == from_scheme:
@@ -110,38 +113,11 @@ def http_to_ws(uri: str) -> str:
     return str(urllib.parse.urlunparse(parsed))
 
 
-def connect_direct(uri: str, headers: dict[str, str] = None):
+def connect_direct(uri: str, headers: dict[str, str] = None) -> Session:
     logging.info("Connecting to SQL session at %s ...", uri)
-    connection = websockets.sync.client.connect(uri=uri, additional_headers=headers)
-    session = Session(ws=connection)
-    return session
-
-
-class Session:
-    """
-    A PEP-0249 compatible Session object for Wherobots DB.
-
-    The session is backed by the WebSocket connection to the Wherobots SQL session.
-    Transactions are not supported, so commit() and rollback() raise NotSupportedError.
-    """
-
-    def __init__(self, ws):
-        self.__ws = ws
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def close(self):
-        self.__ws.close()
-
-    def commit(self):
-        raise NotSupportedError
-
-    def rollback(self):
-        raise NotSupportedError
-
-    def cursor(self):
-        return Cursor(self.__ws.send, self.__ws.recv)
+    try:
+        connection = websockets.sync.client.connect(uri=uri, additional_headers=headers)
+        session = Session(ws=connection)
+        return session
+    except Exception as e:
+        raise InterfaceError("Failed to connect to SQL session!", e)

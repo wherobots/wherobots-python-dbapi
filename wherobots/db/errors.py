@@ -22,13 +22,5 @@ class ProgrammingError(DatabaseError):
     pass
 
 
-class IntegrityError(DatabaseError):
-    pass
-
-
-class DataError(DatabaseError):
-    pass
-
-
 class NotSupportedError(DatabaseError):
     pass
