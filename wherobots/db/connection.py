@@ -2,11 +2,11 @@ from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError
 
 
-class Session:
+class Connection:
     """
-    A PEP-0249 compatible Session object for Wherobots DB.
+    A PEP-0249 compatible Connection object for Wherobots DB.
 
-    The session is backed by the WebSocket connection to the Wherobots SQL session.
+    The connection is backed by the WebSocket connected to the Wherobots SQL session instance.
     Transactions are not supported, so commit() and rollback() raise NotSupportedError.
     """
 

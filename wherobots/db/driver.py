@@ -21,7 +21,7 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
-from .session import Session
+from .connection import Connection
 
 apilevel = "2.0"
 threadsafety = 1
@@ -35,7 +35,7 @@ def connect(
     runtime: Runtime = DEFAULT_RUNTIME,
     region: Region = DEFAULT_REGION,
     wait_timeout_seconds: int = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
-) -> Session:
+) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
     if token and api_key:
@@ -113,11 +113,11 @@ def http_to_ws(uri: str) -> str:
     return str(urllib.parse.urlunparse(parsed))
 
 
-def connect_direct(uri: str, headers: dict[str, str] = None) -> Session:
+def connect_direct(uri: str, headers: dict[str, str] = None) -> Connection:
     logging.info("Connecting to SQL session at %s ...", uri)
     try:
-        connection = websockets.sync.client.connect(uri=uri, additional_headers=headers)
-        session = Session(ws=connection)
+        ws = websockets.sync.client.connect(uri=uri, additional_headers=headers)
+        session = Connection(ws)
         return session
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!", e)
