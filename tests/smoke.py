@@ -27,7 +27,7 @@ def execute(conn):
         for key, value in row.items():
             if key == "wkt_geometry":
                 row[key] = shapely.to_geojson(shapely.from_wkt(value))
-    print(yaml.dump(results, indent=2))
+    print(yaml.dump(results, indent=2, allow_unicode=True))
 
 
 if __name__ == "__main__":
