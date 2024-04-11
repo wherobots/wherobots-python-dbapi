@@ -68,8 +68,7 @@ class Connection:
         The code in this method is purposefully defensive to avoid unexpected situations killing the thread.
         """
         while True:
-            message = json.loads(self.__ws.recv())
-            logging.debug("Received message: %s", message)
+            message = self.__recv()
 
             execution_id = message.get("execution_id")
             if not execution_id:
@@ -103,29 +102,38 @@ class Connection:
 
                 case EventKind.EXECUTION_RESULT:
                     results_format = message.get("results_format")
-
-                    # TODO: Support other results formats.
-                    if results_format != "json":
-                        query.handler(
-                            OperationalError(
-                                f"Unsupported results format {results_format}"
-                            )
-                        )
-                        continue
-
                     logging.info(
                         "Received %s results from %s.",
                         results_format,
                         execution_id,
                     )
+
                     query.state = ExecutionState.COMPLETED
-                    query.handler([json.loads(message.get("results"))])
+                    match results_format:
+                        case "json":
+                            query.handler(json.loads(message.get("results")))
+                        case "arrow":
+                            pass
+                        case _:
+                            query.handler(
+                                OperationalError(
+                                    f"Unsupported results format {results_format}"
+                                )
+                            )
                 case _:
                     logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
         logging.debug("Sending %s", message)
         self.__ws.send(json.dumps(message))
+
+    def __recv(self) -> dict[str, Any]:
+        frame = self.__ws.recv()
+        if isinstance(frame, bytes):
+            frame = frame.decode("utf-8")
+        message = json.loads(frame)
+        logging.debug("Received message: %s", message)
+        return message
 
     def __execute_sql(
         self, sql: str, handler: Callable[[list[Any] | DatabaseError], None]
