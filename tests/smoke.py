@@ -3,16 +3,14 @@
 import argparse
 import functools
 import logging
-from contextlib import closing
+import sys
 
 import shapely
-import sys
 import tabulate
 
 from wherobots.db import connect, connect_direct
-from wherobots.db.runtime import Runtime
 from wherobots.db.region import Region
-
+from wherobots.db.runtime import Runtime
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -60,9 +58,9 @@ if __name__ == "__main__":
         )
 
     with conn_func() as conn:
-        with closing(conn.cursor()) as cursor:
-            cursor.execute(args.sql)
-            results = cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute(args.sql)
+        results = cursor.fetchall()
 
     for row in results:
         for key, value in row.items():

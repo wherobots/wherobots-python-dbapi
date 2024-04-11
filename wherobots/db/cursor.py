@@ -1,27 +1,19 @@
-from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-import json
-import logging
-import uuid
-from typing import Any, Callable
+import queue
+from typing import Any
 
-from .constants import ExecutionState, RequestKind, EventKind
-from .errors import ProgrammingError, OperationalError
+from .errors import ProgrammingError, DatabaseError
 
 
 class Cursor:
 
-    def __init__(self, send_func: Callable[[str], None], recv_func: Callable[[], str]):
-        self.__send_func = send_func
-        self.__recv_func = recv_func
+    def __init__(self, exec_fn, cancel_fn):
+        self.__exec_fn = exec_fn
+        self.__cancel_fn = cancel_fn
 
+        self.__queue: queue.Queue = queue.Queue()
+        self.__results: list[Any] | None = None
         self.__current_execution_id: str | None = None
-        self.__current_execution_state: ExecutionState = ExecutionState.IDLE
-        self.__current_execution_results: Future[list[Any]] | None = None
         self.__current_row: int = 0
-
-        self.__executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="wherobots-sql-cursor"
-        )
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
@@ -39,103 +31,35 @@ class Cursor:
     def rowcount(self) -> int:
         return self.__rowcount
 
-    def close(self):
-        self.__executor.shutdown()
+    def __on_execution_result(self, result: list[Any] | DatabaseError) -> None:
+        self.__queue.put(result)
 
-    def __send_request(self, request):
-        return self.__send_func(json.dumps(request))
+    def __get_results(self) -> list[Any] | None:
+        if not self.__current_execution_id:
+            raise ProgrammingError("No query has been executed yet")
+        if self.__results is not None:
+            return self.__results
+
+        result = self.__queue.get()
+        if isinstance(result, DatabaseError):
+            raise result
+        self.__rowcount = len(result)
+        self.__results = result
+        return self.__results
 
     def execute(self, operation: str, parameters: dict[str, Any] = None):
-        self.__current_execution_id = str(uuid.uuid4())
-        self.__current_execution_state = ExecutionState.EXECUTION_REQUESTED
+        if self.__current_execution_id:
+            self.__cancel_fn(self.__current_execution_id)
+
+        self.__results = None
         self.__current_row = 0
         self.__rowcount = -1
 
-        def _execute(request):
-            """This function is executed in a separate thread to send the request, wait for, and gather the results."""
-            logging.info("Executing SQL: %s", request["statement"])
-            self.__send_request(request)
-            return self.__gather_results()
-
         sql = operation.format(**(parameters or {}))
-        exec_request = {
-            "kind": RequestKind.EXECUTE_SQL.value,
-            "execution_id": self.__current_execution_id,
-            "statement": sql,
-        }
-
-        if self.__current_execution_results:
-            self.__current_execution_results.cancel()
-        self.__current_execution_results = self.__executor.submit(
-            _execute, exec_request
-        )
+        self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
     def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
         raise NotImplementedError
-
-    def __get_results(self) -> list[Any] | None:
-        if not self.__current_execution_results:
-            raise ProgrammingError("No query has been executed yet")
-        try:
-            return self.__current_execution_results.result()
-        except CancelledError:
-            raise ProgrammingError(
-                "Query execution was cancelled while waiting for results"
-            )
-
-    def __gather_results(self):
-        """
-        Reads from the SQL session for updates on the current execution state. Once the query has completed
-        successfully, requests and processes the results.
-        """
-        while not self.__current_execution_state.is_terminal_state():
-            response = json.loads(self.__recv_func())
-            logging.debug("Received response: %s", response)
-
-            kind = EventKind[response["kind"].upper()]
-            match kind:
-                case EventKind.STATE_UPDATED:
-                    self.__current_execution_state = ExecutionState[
-                        response["state"].upper()
-                    ]
-                    logging.info(
-                        "Query %s is %s.",
-                        self.__current_execution_id,
-                        self.__current_execution_state,
-                    )
-
-                    match self.__current_execution_state:
-                        case ExecutionState.SUCCEEDED:
-                            results_request = {
-                                "kind": RequestKind.RETRIEVE_RESULTS.value,
-                                "execution_id": self.__current_execution_id,
-                                "results_format": "json",
-                            }
-                            logging.info(
-                                "Requesting results from %s ...",
-                                self.__current_execution_id,
-                            )
-                            self.__send_request(results_request)
-                            self.__current_execution_state = (
-                                ExecutionState.RESULTS_REQUESTED
-                            )
-                        case ExecutionState.FAILED:
-                            raise OperationalError("Execution failed")
-                case EventKind.EXECUTION_RESULT:
-                    self.__current_execution_state = ExecutionState.COMPLETED
-                    results_format = response["results_format"]
-                    logging.info(
-                        "Received %s results from %s.",
-                        results_format,
-                        self.__current_execution_id,
-                    )
-                    if results_format != "json":
-                        raise OperationalError(
-                            f"Unsupported results format {results_format}"
-                        )
-                    # TODO: When full results are sent, we won't need to wrap them in a list to simulate a row.
-                    self.__rowcount = 1
-                    return [json.loads(response["results"])]
 
     def fetchone(self):
         results = self.__get_results()[self.__current_row :]
