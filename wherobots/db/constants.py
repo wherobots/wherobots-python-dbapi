@@ -45,3 +45,12 @@ class RequestKind(StrEnum):
 class EventKind(StrEnum):
     STATE_UPDATED = auto()
     EXECUTION_RESULT = auto()
+
+
+class ResultsFormat(StrEnum):
+    JSON = auto()
+    ARROW = auto()
+
+
+class DataCompression(StrEnum):
+    BROTLI = auto()

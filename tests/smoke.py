@@ -5,8 +5,9 @@ import functools
 import logging
 import sys
 
-import shapely
-import tabulate
+import pandas
+from rich.console import Console
+from rich.table import Table
 
 from wherobots.db import connect, connect_direct
 from wherobots.db.region import Region
@@ -24,6 +25,9 @@ if __name__ == "__main__":
         default=logging.INFO,
     )
     parser.add_argument("--ws-url", help="Direct URL to connect to")
+    parser.add_argument(
+        "--wide", help="Enable wide output", action="store_const", const=80, default=30
+    )
     parser.add_argument("sql", help="SQL query to execute")
     args = parser.parse_args()
 
@@ -60,11 +64,13 @@ if __name__ == "__main__":
     with conn_func() as conn:
         cursor = conn.cursor()
         cursor.execute(args.sql)
-        results = cursor.fetchall()
+        results: pandas.DataFrame = cursor.fetchall()
 
-    for row in results:
-        for key, value in row.items():
-            if "geometry" in key:
-                row[key] = shapely.to_geojson(shapely.from_wkt(value))
-
-    print(tabulate.tabulate(results, headers="keys", tablefmt="rounded_outline"))
+    table = Table()
+    table.add_column("#")
+    for column in results.columns:
+        table.add_column(column, max_width=args.wide, no_wrap=True)
+    for row in results.itertuples(name=None):
+        r = [str(x) for x in row]
+        table.add_row(*r)
+    Console().print(table)

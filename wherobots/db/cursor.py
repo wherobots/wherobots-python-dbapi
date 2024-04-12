@@ -31,7 +31,7 @@ class Cursor:
     def rowcount(self) -> int:
         return self.__rowcount
 
-    def __on_execution_result(self, result: list[Any] | DatabaseError) -> None:
+    def __on_execution_result(self, result) -> None:
         self.__queue.put(result)
 
     def __get_results(self) -> list[Any] | None:
