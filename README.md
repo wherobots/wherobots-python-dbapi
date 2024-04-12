@@ -10,20 +10,18 @@ If you use [Poetry](https://python-poetry.org) in your project, add the
 dependency with `poetry add`:
 
 ```
-$ poetry add wherobots-python-dbapi-driver
+$ poetry add git+https://github.com/wherobots/wherobots-python-dbapi-driver
 ```
 
 Otherwise, just `pip install` it:
 
 ```
-$ pip install wherobots-python-dbapi-driver
+$ pip install git+https://github.com/wherobots/wherobots-python-dbapi-driver
 ```
 
 ## Usage
 
 ```python
-import tabulate
-
 from wherobots.db import connect
 from wherobots.db.region import Region
 from wherobots.db.runtime import Runtime
@@ -35,5 +33,5 @@ with connect(
     curr = conn.cursor()
     curr.execute("SHOW SCHEMAS IN wherobots_open_data")
     results = curr.fetchall()
-    print(tabulate.tabulate(results, headers="keys", tablefmt="pretty"))
+    print(results)
 ```
