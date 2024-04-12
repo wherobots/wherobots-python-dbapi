@@ -9,6 +9,7 @@ STAGING_ENDPOINT = "api.staging.wherobots.services"  # "api.staging.wherobots.co
 DEFAULT_RUNTIME = Runtime.SEDONA
 DEFAULT_REGION = Region.AWS_US_WEST_2
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS = 300
+MAX_MESSAGE_SIZE = 100 * 2**20  # 100MiB
 
 
 class ExecutionState(StrEnum):

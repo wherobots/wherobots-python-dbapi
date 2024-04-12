@@ -14,6 +14,7 @@ from .constants import (
     DEFAULT_REGION,
     DEFAULT_RUNTIME,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+    MAX_MESSAGE_SIZE,
 )
 from .errors import (
     InterfaceError,
@@ -116,7 +117,9 @@ def http_to_ws(uri: str) -> str:
 def connect_direct(uri: str, headers: dict[str, str] = None) -> Connection:
     logging.info("Connecting to SQL session at %s ...", uri)
     try:
-        ws = websockets.sync.client.connect(uri=uri, additional_headers=headers)
+        ws = websockets.sync.client.connect(
+            uri=uri, additional_headers=headers, max_size=MAX_MESSAGE_SIZE
+        )
         session = Connection(ws)
         return session
     except Exception as e:
