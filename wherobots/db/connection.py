@@ -7,8 +7,9 @@ from typing import Callable, Any
 
 import cbor2
 import pyarrow
-from websockets.protocol import State
-from websockets.sync.client import ClientConnection
+import websockets.exceptions
+import websockets.protocol
+import websockets.sync.client
 
 from wherobots.db.constants import (
     RequestKind,
@@ -47,7 +48,7 @@ class Connection:
     corresponding query state. Queries are tracked by their unique execution ID.
     """
 
-    def __init__(self, ws: ClientConnection):
+    def __init__(self, ws: websockets.sync.client.ClientConnection):
         self.__ws = ws
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -75,11 +76,15 @@ class Connection:
 
     def __main_loop(self):
         """Main background loop listening for messages from the SQL session."""
-        while self.__ws.protocol.state < State.CLOSING:
+        logging.debug("Starting background connection handling loop...")
+        while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
             try:
                 self.__listen()
+            except websockets.exceptions.ConnectionClosedOK:
+                logging.debug("Connection closed; stopping main loop.")
+                return
             except Exception as e:
-                logging.exception("Error handling message from SQL session", e)
+                logging.exception("Error handling message from SQL session", exc_info=e)
 
     def __listen(self):
         """Waits for the next message from the SQL session and processes it.
