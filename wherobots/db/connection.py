@@ -1,12 +1,14 @@
 import json
 import logging
+import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Any
 
 import cbor2
 import pyarrow
+from websockets.protocol import State
+from websockets.sync.client import ClientConnection
 
 from wherobots.db.constants import (
     RequestKind,
@@ -16,8 +18,7 @@ from wherobots.db.constants import (
     DataCompression,
 )
 from wherobots.db.cursor import Cursor
-from wherobots.db.errors import NotSupportedError, DatabaseError, OperationalError
-
+from wherobots.db.errors import NotSupportedError, OperationalError
 
 _DEFAULT_RESULTS_FORMAT = ResultsFormat.ARROW
 _DEFAULT_DATA_COMPRESSION = DataCompression.BROTLI
@@ -44,19 +45,17 @@ class Connection:
 
     A background thread listens for events from the SQL session, and handles update to the
     corresponding query state. Queries are tracked by their unique execution ID.
-
-    Note: the Connection object MUST be used as a context manager.
     """
 
-    def __init__(self, ws):
+    def __init__(self, ws: ClientConnection):
         self.__ws = ws
         self.__queries: dict[str, Query] = {}
+        self.__thread = threading.Thread(
+            target=self.__main_loop, daemon=True, name="wherobots-connection"
+        )
+        self.__thread.start()
 
     def __enter__(self):
-        self.__executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="wherobots-sql-connection"
-        )
-        self.__executor.submit(self.__listen)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -64,7 +63,6 @@ class Connection:
 
     def close(self):
         self.__ws.close()
-        self.__executor.shutdown(wait=True)
 
     def commit(self):
         raise NotSupportedError
@@ -75,78 +73,83 @@ class Connection:
     def cursor(self) -> Cursor:
         return Cursor(self.__execute_sql, self.__cancel_query)
 
+    def __main_loop(self):
+        """Main background loop listening for messages from the SQL session."""
+        while self.__ws.protocol.state < State.CLOSING:
+            try:
+                self.__listen()
+            except Exception as e:
+                logging.exception("Error handling message from SQL session", e)
+
     def __listen(self):
-        """Main background loop listening for messages from the SQL session.
+        """Waits for the next message from the SQL session and processes it.
 
         The code in this method is purposefully defensive to avoid unexpected situations killing the thread.
         """
-        while True:
-            message = self.__recv()
+        message = self.__recv()
+        kind = message.get("kind")
+        execution_id = message.get("execution_id")
+        if not kind or not execution_id:
+            # Invalid event.
+            return
 
-            execution_id = message.get("execution_id")
-            if not execution_id:
-                continue
+        query = self.__queries.get(execution_id)
+        if not query:
+            logging.warning(
+                "Received %s event for unknown execution ID %s", kind, execution_id
+            )
+            return
 
-            query = self.__queries.get(execution_id)
-            if not query:
-                logging.warning(
-                    "Received %s event for unknown execution ID %s", kind, execution_id
+        match kind:
+            case EventKind.STATE_UPDATED:
+                try:
+                    query.state = ExecutionState[message["state"].upper()]
+                    logging.info("Query %s is now %s.", execution_id, query.state)
+                except KeyError:
+                    logging.warning("Invalid state update message for %s", execution_id)
+                    return
+
+                # Incoming state transitions are handled here.
+                match query.state:
+                    case ExecutionState.SUCCEEDED:
+                        self.__request_results(execution_id)
+                    case ExecutionState.FAILED:
+                        query.handler(OperationalError("Query execution failed"))
+
+            case EventKind.EXECUTION_RESULT:
+                results = message.get("results")
+                if not results or not isinstance(results, dict):
+                    logging.warning("Got no results back from %s.", execution_id)
+                    return
+
+                result_bytes = results.get("result_bytes")
+                result_format = results.get("format")
+                result_compression = results.get("compression")
+                logging.info(
+                    "Received %d bytes of %s-compressed %s results from %s.",
+                    len(result_bytes),
+                    result_compression,
+                    result_format,
+                    execution_id,
                 )
-                continue
 
-            kind = message.get("kind")
-            match kind:
-                case EventKind.STATE_UPDATED:
-                    try:
-                        query.state = ExecutionState[message["state"].upper()]
-                        logging.info("Query %s is now %s.", execution_id, query.state)
-                    except KeyError:
-                        logging.warning(
-                            "Invalid state update message for %s", execution_id
-                        )
-                        continue
-
-                    # Incoming state transitions are handled here.
-                    match query.state:
-                        case ExecutionState.SUCCEEDED:
-                            self.__request_results(execution_id)
-                        case ExecutionState.FAILED:
-                            query.handler(OperationalError("Query execution failed"))
-
-                case EventKind.EXECUTION_RESULT:
-                    results = message.get("results")
-                    if not results or not isinstance(results, dict):
-                        logging.warning("Got no results back from %s.", execution_id)
-                        continue
-
-                    result_bytes = results.get("result_bytes")
-                    result_format = results.get("format")
-                    result_compression = results.get("compression")
-                    logging.info(
-                        "Received %d bytes of %s-compressed %s results from %s.",
-                        len(result_bytes),
-                        result_compression,
-                        result_format,
-                        execution_id,
-                    )
-
-                    query.state = ExecutionState.COMPLETED
-                    match result_format:
-                        case ResultsFormat.JSON:
-                            query.handler(json.loads(result_bytes.decode("utf-8")))
-                        case ResultsFormat.ARROW:
-                            buffer = pyarrow.py_buffer(result_bytes)
-                            stream = pyarrow.input_stream(buffer, result_compression)
-                            with pyarrow.ipc.open_stream(stream) as reader:
-                                query.handler(reader.read_pandas())
-                        case _:
-                            query.handler(
-                                OperationalError(
-                                    f"Unsupported results format {result_format}"
-                                )
+                query.state = ExecutionState.COMPLETED
+                match result_format:
+                    case ResultsFormat.JSON:
+                        query.handler(json.loads(result_bytes.decode("utf-8")))
+                    case ResultsFormat.ARROW:
+                        buffer = pyarrow.py_buffer(result_bytes)
+                        stream = pyarrow.input_stream(buffer, result_compression)
+                        with pyarrow.ipc.open_stream(stream) as reader:
+                            query.handler(reader.read_pandas())
+                    case _:
+                        query.handler(
+                            OperationalError(
+                                f"Unsupported results format {result_format}"
                             )
-                case _:
-                    logging.warning("Received unknown %s event!", kind)
+                        )
+            case _:
+                logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
         logging.debug("Sending %s", message)
