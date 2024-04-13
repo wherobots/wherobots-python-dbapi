@@ -33,8 +33,8 @@ def connect(
     host: str = DEFAULT_ENDPOINT,
     token: str = None,
     api_key: str = None,
-    runtime: Runtime = DEFAULT_RUNTIME,
-    region: Region = DEFAULT_REGION,
+    runtime: Runtime = None,
+    region: Region = None,
     wait_timeout_seconds: int = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
 ) -> Connection:
     if not token and not api_key:
@@ -47,6 +47,9 @@ def connect(
         headers["Authorization"] = f"Bearer {token}"
     elif api_key:
         headers["X-API-Key"] = api_key
+
+    runtime = runtime or DEFAULT_RUNTIME
+    region = region or DEFAULT_REGION
 
     logging.info(
         "Requesting %s/%s runtime in %s from %s ...",
