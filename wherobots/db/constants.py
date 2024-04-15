@@ -46,6 +46,7 @@ class RequestKind(StrEnum):
 class EventKind(StrEnum):
     STATE_UPDATED = auto()
     EXECUTION_RESULT = auto()
+    ERROR = auto()
 
 
 class ResultsFormat(StrEnum):

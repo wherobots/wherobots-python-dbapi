@@ -153,6 +153,10 @@ class Connection:
                                 f"Unsupported results format {result_format}"
                             )
                         )
+            case EventKind.ERROR:
+                query.state = ExecutionState.FAILED
+                error = message.get("message")
+                query.handler(OperationalError(error))
             case _:
                 logging.warning("Received unknown %s event!", kind)
 
