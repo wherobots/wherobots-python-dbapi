@@ -13,6 +13,7 @@ from .constants import (
     DEFAULT_ENDPOINT,
     DEFAULT_REGION,
     DEFAULT_RUNTIME,
+    DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     MAX_MESSAGE_SIZE,
 )
@@ -35,7 +36,8 @@ def connect(
     api_key: str = None,
     runtime: Runtime = None,
     region: Region = None,
-    wait_timeout_seconds: int = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+    wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+    read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -79,7 +81,7 @@ def connect(
     session_id_url = resp.url
 
     @tenacity.retry(
-        stop=tenacity.stop_after_delay(wait_timeout_seconds),
+        stop=tenacity.stop_after_delay(wait_timeout),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
         retry=tenacity.retry_if_not_exception_type(
             (requests.HTTPError, OperationalError)
@@ -105,7 +107,11 @@ def connect(
     except Exception as e:
         raise InterfaceError("Could not acquire SQL session!", e)
 
-    return connect_direct(http_to_ws(session_uri), headers)
+    return connect_direct(
+        uri=http_to_ws(session_uri),
+        headers=headers,
+        read_timeout=read_timeout,
+    )
 
 
 def http_to_ws(uri: str) -> str:
@@ -117,13 +123,17 @@ def http_to_ws(uri: str) -> str:
     return str(urllib.parse.urlunparse(parsed))
 
 
-def connect_direct(uri: str, headers: dict[str, str] = None) -> Connection:
+def connect_direct(
+    uri: str,
+    headers: dict[str, str] = None,
+    read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+) -> Connection:
     logging.info("Connecting to SQL session at %s ...", uri)
     try:
         ws = websockets.sync.client.connect(
             uri=uri, additional_headers=headers, max_size=MAX_MESSAGE_SIZE
         )
-        session = Connection(ws)
+        session = Connection(ws, read_timeout)
         return session
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
