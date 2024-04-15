@@ -126,4 +126,4 @@ def connect_direct(uri: str, headers: dict[str, str] = None) -> Connection:
         session = Connection(ws)
         return session
     except Exception as e:
-        raise InterfaceError("Failed to connect to SQL session!", e)
+        raise InterfaceError("Failed to connect to SQL session!") from e

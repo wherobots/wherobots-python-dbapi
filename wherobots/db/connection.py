@@ -12,6 +12,7 @@ import websockets.protocol
 import websockets.sync.client
 
 from wherobots.db.constants import (
+    DEFAULT_READ_TIMEOUT_SECONDS,
     RequestKind,
     EventKind,
     ExecutionState,
@@ -80,6 +81,9 @@ class Connection:
         while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
             try:
                 self.__listen()
+            except TimeoutError:
+                # Expected, retry next time
+                continue
             except websockets.exceptions.ConnectionClosedOK:
                 logging.info("Connection closed; stopping main loop.")
                 return
@@ -164,7 +168,7 @@ class Connection:
         self.__ws.send(json.dumps(message))
 
     def __recv(self) -> dict[str, Any]:
-        frame = self.__ws.recv()
+        frame = self.__ws.recv(timeout=DEFAULT_READ_TIMEOUT_SECONDS)
         if isinstance(frame, str):
             message = json.loads(frame)
         elif isinstance(frame, bytes):
