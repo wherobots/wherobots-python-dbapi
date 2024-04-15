@@ -31,7 +31,12 @@ if __name__ == "__main__":
     parser.add_argument("sql", help="SQL query to execute")
     args = parser.parse_args()
 
-    logging.basicConfig(stream=sys.stdout, level=args.debug)
+    logging.basicConfig(
+        stream=sys.stdout,
+        level=args.debug,
+        format="%(asctime)s.%(msecs)03d %(levelname)s %(name)20s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logging.getLogger("websockets.protocol").setLevel(args.debug)
 
     api_key = None
@@ -58,7 +63,7 @@ if __name__ == "__main__":
             api_key=api_key,
             runtime=Runtime.SEDONA,
             region=Region.AWS_US_WEST_2,
-            wait_timeout_seconds=900,
+            wait_timeout=900,
         )
 
     with conn_func() as conn:
