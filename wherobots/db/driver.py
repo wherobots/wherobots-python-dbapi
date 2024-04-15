@@ -5,8 +5,10 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 
 import logging
 import urllib.parse
+import queue
 import requests
 import tenacity
+import threading
 import websockets.sync.client
 
 from .constants import (
@@ -128,12 +130,30 @@ def connect_direct(
     headers: dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
 ) -> Connection:
-    logging.info("Connecting to SQL session at %s ...", uri)
-    try:
-        ws = websockets.sync.client.connect(
-            uri=uri, additional_headers=headers, max_size=MAX_MESSAGE_SIZE
-        )
-        session = Connection(ws, read_timeout)
-        return session
-    except Exception as e:
-        raise InterfaceError("Failed to connect to SQL session!") from e
+    q = queue.SimpleQueue()
+
+    def create_ws_connection():
+        try:
+            logging.info("Connecting to SQL session at %s ...", uri)
+            ws = websockets.sync.client.connect(
+                uri=uri,
+                additional_headers=headers,
+                max_size=MAX_MESSAGE_SIZE,
+            )
+            q.put(ws)
+        except Exception as e:
+            q.put(e)
+
+    dt = threading.Thread(
+        name="wherobots-ws-connector",
+        target=create_ws_connection,
+        daemon=True,
+    )
+    dt.start()
+    dt.join()
+
+    result = q.get()
+    if isinstance(result, Exception):
+        raise InterfaceError("Failed to connect to SQL session!") from result
+
+    return Connection(result, read_timeout)
