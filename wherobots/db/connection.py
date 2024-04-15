@@ -49,8 +49,13 @@ class Connection:
     corresponding query state. Queries are tracked by their unique execution ID.
     """
 
-    def __init__(self, ws: websockets.sync.client.ClientConnection):
+    def __init__(
+        self,
+        ws: websockets.sync.client.ClientConnection,
+        read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    ):
         self.__ws = ws
+        self.__read_timeout = read_timeout
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
             target=self.__main_loop, daemon=True, name="wherobots-connection"
@@ -168,7 +173,7 @@ class Connection:
         self.__ws.send(json.dumps(message))
 
     def __recv(self) -> dict[str, Any]:
-        frame = self.__ws.recv(timeout=DEFAULT_READ_TIMEOUT_SECONDS)
+        frame = self.__ws.recv(timeout=self.__read_timeout)
         if isinstance(frame, str):
             message = json.loads(frame)
         elif isinstance(frame, bytes):

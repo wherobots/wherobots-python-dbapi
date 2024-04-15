@@ -4,13 +4,13 @@ from .region import Region
 from .runtime import Runtime
 
 
-DEFAULT_ENDPOINT = "api.wherobots.services"  # "api.cloud.wherobots.com"
-STAGING_ENDPOINT = "api.staging.wherobots.services"  # "api.staging.wherobots.com"
-DEFAULT_RUNTIME = Runtime.SEDONA
-DEFAULT_REGION = Region.AWS_US_WEST_2
-DEFAULT_READ_TIMEOUT_SECONDS = 0.5
-DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS = 300
-MAX_MESSAGE_SIZE = 100 * 2**20  # 100MiB
+DEFAULT_ENDPOINT: str = "api.wherobots.services"  # "api.cloud.wherobots.com"
+STAGING_ENDPOINT: str = "api.staging.wherobots.services"  # "api.staging.wherobots.com"
+DEFAULT_RUNTIME: Runtime = Runtime.SEDONA
+DEFAULT_REGION: Region = Region.AWS_US_WEST_2
+DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
+DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 300
+MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 
 
 class ExecutionState(StrEnum):
