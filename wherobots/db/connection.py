@@ -76,12 +76,12 @@ class Connection:
 
     def __main_loop(self):
         """Main background loop listening for messages from the SQL session."""
-        logging.debug("Starting background connection handling loop...")
+        logging.info("Starting background connection handling loop...")
         while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
             try:
                 self.__listen()
             except websockets.exceptions.ConnectionClosedOK:
-                logging.debug("Connection closed; stopping main loop.")
+                logging.info("Connection closed; stopping main loop.")
                 return
             except Exception as e:
                 logging.exception("Error handling message from SQL session", exc_info=e)
@@ -157,7 +157,6 @@ class Connection:
                 logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
-        logging.debug("Sending %s", message)
         self.__ws.send(json.dumps(message))
 
     def __recv(self) -> dict[str, Any]:
@@ -168,7 +167,6 @@ class Connection:
             message = cbor2.loads(frame)
         else:
             raise ValueError("Unexpected frame type received")
-        logging.debug("Received message: %s", message)
         return message
 
     def __execute_sql(self, sql: str, handler: Callable[[Any], None]) -> str:
@@ -194,7 +192,6 @@ class Connection:
         if not query:
             return
 
-        # TODO: Switch to Arrow encoding of results when supported.
         request = {
             "kind": RequestKind.RETRIEVE_RESULTS.value,
             "execution_id": execution_id,
