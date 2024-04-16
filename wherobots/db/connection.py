@@ -114,60 +114,57 @@ class Connection:
             )
             return
 
-        match kind:
-            case EventKind.STATE_UPDATED:
-                try:
-                    query.state = ExecutionState[message["state"].upper()]
-                    logging.info("Query %s is now %s.", execution_id, query.state)
-                except KeyError:
-                    logging.warning("Invalid state update message for %s", execution_id)
-                    return
+        if kind == EventKind.STATE_UPDATED:
+            try:
+                query.state = ExecutionState[message["state"].upper()]
+                logging.info("Query %s is now %s.", execution_id, query.state)
+            except KeyError:
+                logging.warning("Invalid state update message for %s", execution_id)
+                return
 
-                # Incoming state transitions are handled here.
-                match query.state:
-                    case ExecutionState.SUCCEEDED:
-                        self.__request_results(execution_id)
-                    case ExecutionState.FAILED:
-                        query.handler(OperationalError("Query execution failed"))
+            # Incoming state transitions are handled here.
+            if query.state == ExecutionState.SUCCEEDED:
+                self.__request_results(execution_id)
+            elif query.state == ExecutionState.FAILED:
+                query.handler(OperationalError("Query execution failed"))
 
-            case EventKind.EXECUTION_RESULT:
-                results = message.get("results")
-                if not results or not isinstance(results, dict):
-                    logging.warning("Got no results back from %s.", execution_id)
-                    return
+        elif kind == EventKind.EXECUTION_RESULT:
+            results = message.get("results")
+            if not results or not isinstance(results, dict):
+                logging.warning("Got no results back from %s.", execution_id)
+                return
 
-                result_bytes = results.get("result_bytes")
-                result_format = results.get("format")
-                result_compression = results.get("compression")
-                logging.info(
-                    "Received %d bytes of %s-compressed %s results from %s.",
-                    len(result_bytes),
-                    result_compression,
-                    result_format,
-                    execution_id,
+            result_bytes = results.get("result_bytes")
+            result_format = results.get("format")
+            result_compression = results.get("compression")
+            logging.info(
+                "Received %d bytes of %s-compressed %s results from %s.",
+                len(result_bytes),
+                result_compression,
+                result_format,
+                execution_id,
+            )
+
+            query.state = ExecutionState.COMPLETED
+            if result_format == ResultsFormat.JSON:
+                query.handler(json.loads(result_bytes.decode("utf-8")))
+            elif result_format == ResultsFormat.ARROW:
+                buffer = pyarrow.py_buffer(result_bytes)
+                stream = pyarrow.input_stream(buffer, result_compression)
+                with pyarrow.ipc.open_stream(stream) as reader:
+                    query.handler(reader.read_pandas())
+            else:
+                query.handler(
+                    OperationalError(
+                        f"Unsupported results format {result_format}"
+                    )
                 )
-
-                query.state = ExecutionState.COMPLETED
-                match result_format:
-                    case ResultsFormat.JSON:
-                        query.handler(json.loads(result_bytes.decode("utf-8")))
-                    case ResultsFormat.ARROW:
-                        buffer = pyarrow.py_buffer(result_bytes)
-                        stream = pyarrow.input_stream(buffer, result_compression)
-                        with pyarrow.ipc.open_stream(stream) as reader:
-                            query.handler(reader.read_pandas())
-                    case _:
-                        query.handler(
-                            OperationalError(
-                                f"Unsupported results format {result_format}"
-                            )
-                        )
-            case EventKind.ERROR:
-                query.state = ExecutionState.FAILED
-                error = message.get("message")
-                query.handler(OperationalError(error))
-            case _:
-                logging.warning("Received unknown %s event!", kind)
+        elif kind == EventKind.ERROR:
+            query.state = ExecutionState.FAILED
+            error = message.get("message")
+            query.handler(OperationalError(error))
+        else:
+            logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
         self.__ws.send(json.dumps(message))
