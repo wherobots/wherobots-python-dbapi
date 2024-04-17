@@ -77,8 +77,18 @@ class Cursor:
     def fetchall(self):
         return self.__get_results()[self.__current_row :]
 
+    def close(self):
+        """Close the cursor."""
+        pass
+
     def __iter__(self):
         return self
 
     def __next__(self):
         raise StopIteration
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
