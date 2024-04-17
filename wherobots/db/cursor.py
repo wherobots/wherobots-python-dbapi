@@ -1,5 +1,5 @@
 import queue
-from typing import Any
+from typing import Any, Optional
 
 from .errors import ProgrammingError, DatabaseError
 
@@ -11,20 +11,20 @@ class Cursor:
         self.__cancel_fn = cancel_fn
 
         self.__queue: queue.Queue = queue.Queue()
-        self.__results: list[Any] | None = None
-        self.__current_execution_id: str | None = None
+        self.__results: Optional[list[Any]] = None
+        self.__current_execution_id: Optional[str] = None
         self.__current_row: int = 0
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
-        self.__description: str | None = None
+        self.__description: Optional[str] = None
         self.__rowcount: int = -1
 
         # Array-size is also defined by PEP-0249 and is expected to be read/writable.
         self.arraysize: int = 1
 
     @property
-    def description(self) -> str | None:
+    def description(self) -> Optional[str]:
         return self.__description
 
     @property
@@ -34,7 +34,7 @@ class Cursor:
     def __on_execution_result(self, result) -> None:
         self.__queue.put(result)
 
-    def __get_results(self) -> list[Any] | None:
+    def __get_results(self) -> Optional[list[Any]]:
         if not self.__current_execution_id:
             raise ProgrammingError("No query has been executed yet")
         if self.__results is not None:
