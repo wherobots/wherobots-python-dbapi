@@ -1,5 +1,5 @@
 from enum import auto
-from strenum import StrEnum
+from strenum import LowercaseStrEnum
 
 from .region import Region
 from .runtime import Runtime
@@ -14,7 +14,7 @@ DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 300
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 
 
-class ExecutionState(StrEnum):
+class ExecutionState(LowercaseStrEnum):
     IDLE = auto()
     "Not executing any operation."
 
@@ -40,21 +40,21 @@ class ExecutionState(StrEnum):
         return self in (ExecutionState.COMPLETED, ExecutionState.FAILED)
 
 
-class RequestKind(StrEnum):
+class RequestKind(LowercaseStrEnum):
     EXECUTE_SQL = auto()
     RETRIEVE_RESULTS = auto()
 
 
-class EventKind(StrEnum):
+class EventKind(LowercaseStrEnum):
     STATE_UPDATED = auto()
     EXECUTION_RESULT = auto()
     ERROR = auto()
 
 
-class ResultsFormat(StrEnum):
+class ResultsFormat(LowercaseStrEnum):
     JSON = auto()
     ARROW = auto()
 
 
-class DataCompression(StrEnum):
+class DataCompression(LowercaseStrEnum):
     BROTLI = auto()
