@@ -35,3 +35,17 @@ with connect(
     results = curr.fetchall()
     print(results)
 ```
+
+The `Cursor` also supports the context manager protocol, so you can use
+it within a `with` statement when needed:
+
+```python
+with connect(...) as conn:
+    with conn.cursor() as curr:
+        curr.execute(...)
+        results = curr.fetchall()
+```
+
+It also implements the `close()` method, as suggested by the PEP-2049
+specification, to support situations where the cursor is wrapped in a
+`contextmanager.closing()`.
