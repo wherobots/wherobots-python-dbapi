@@ -1,4 +1,5 @@
-from enum import StrEnum, auto
+from enum import auto
+from strenum import StrEnum
 
 from .region import Region
 from .runtime import Runtime
