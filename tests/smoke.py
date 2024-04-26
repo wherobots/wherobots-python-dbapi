@@ -58,7 +58,7 @@ if __name__ == "__main__":
     else:
         conn_func = functools.partial(
             connect,
-            host="api.staging.wherobots.services",
+            host="api.staging.wherobots.com",
             token=token,
             api_key=api_key,
             runtime=Runtime.SEDONA,

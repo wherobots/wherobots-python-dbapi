@@ -6,7 +6,7 @@ from .runtime import Runtime
 
 
 DEFAULT_ENDPOINT: str = "api.wherobots.services"  # "api.cloud.wherobots.com"
-STAGING_ENDPOINT: str = "api.staging.wherobots.services"  # "api.staging.wherobots.com"
+STAGING_ENDPOINT: str = "api.staging.wherobots.com"  # "api.staging.wherobots.com"
 DEFAULT_RUNTIME: Runtime = Runtime.SEDONA
 DEFAULT_REGION: Region = Region.AWS_US_WEST_2
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
