@@ -5,7 +5,7 @@ from .region import Region
 from .runtime import Runtime
 
 
-DEFAULT_ENDPOINT: str = "api.wherobots.services"  # "api.cloud.wherobots.com"
+DEFAULT_ENDPOINT: str = "api.cloud.wherobots.com"  # "api.cloud.wherobots.com"
 STAGING_ENDPOINT: str = "api.staging.wherobots.com"  # "api.staging.wherobots.com"
 DEFAULT_RUNTIME: Runtime = Runtime.SEDONA
 DEFAULT_REGION: Region = Region.AWS_US_WEST_2
