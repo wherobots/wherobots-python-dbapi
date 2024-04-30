@@ -1,5 +1,6 @@
 import json
 import logging
+import textwrap
 import threading
 import uuid
 from dataclasses import dataclass
@@ -18,12 +19,10 @@ from wherobots.db.constants import (
     ExecutionState,
     ResultsFormat,
     DataCompression,
+    GeometryRepresentation,
 )
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
-
-_DEFAULT_RESULTS_FORMAT = ResultsFormat.ARROW
-_DEFAULT_DATA_COMPRESSION = DataCompression.BROTLI
 
 
 @dataclass
@@ -53,9 +52,16 @@ class Connection:
         self,
         ws: websockets.sync.client.ClientConnection,
         read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+        results_format: ResultsFormat | None = None,
+        data_compression: DataCompression | None = None,
+        geometry_representation: GeometryRepresentation | None = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout
+        self.__results_format = results_format
+        self.__data_compression = data_compression
+        self.__geometry_representation = geometry_representation
+
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
             target=self.__main_loop, daemon=True, name="wherobots-connection"
@@ -155,9 +161,7 @@ class Connection:
                     query.handler(reader.read_pandas())
             else:
                 query.handler(
-                    OperationalError(
-                        f"Unsupported results format {result_format}"
-                    )
+                    OperationalError(f"Unsupported results format {result_format}")
                 )
         elif kind == EventKind.ERROR:
             query.state = ExecutionState.FAILED
@@ -167,7 +171,9 @@ class Connection:
             logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
-        self.__ws.send(json.dumps(message))
+        request = json.dumps(message)
+        logging.debug("Request: %s", request)
+        self.__ws.send(request)
 
     def __recv(self) -> dict[str, Any]:
         frame = self.__ws.recv(timeout=self.__read_timeout)
@@ -194,6 +200,10 @@ class Connection:
             state=ExecutionState.EXECUTION_REQUESTED,
             handler=handler,
         )
+
+        logging.info(
+            "Executing SQL query %s: %s", execution_id, textwrap.shorten(sql, width=60)
+        )
         self.__send(request)
         return execution_id
 
@@ -205,9 +215,14 @@ class Connection:
         request = {
             "kind": RequestKind.RETRIEVE_RESULTS.value,
             "execution_id": execution_id,
-            "format": _DEFAULT_RESULTS_FORMAT.value,
-            "compression": _DEFAULT_DATA_COMPRESSION.value,
         }
+        if self.__results_format:
+            request["format"] = self.__results_format.value
+        if self.__data_compression:
+            request["compression"] = self.__data_compression.value
+        if self.__geometry_representation:
+            request["geometry"] = self.__geometry_representation.value
+
         query.state = ExecutionState.RESULTS_REQUESTED
         logging.info("Requesting results from %s ...", execution_id)
         self.__send(request)

@@ -18,6 +18,9 @@ from .constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     MAX_MESSAGE_SIZE,
+    ResultsFormat,
+    DataCompression,
+    GeometryRepresentation,
 )
 from .errors import (
     InterfaceError,
@@ -40,6 +43,9 @@ def connect(
     region: Region = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    results_format: ResultsFormat | None = None,
+    data_compression: DataCompression | None = None,
+    geometry_representation: GeometryRepresentation | None = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -113,6 +119,9 @@ def connect(
         uri=http_to_ws(session_uri),
         headers=headers,
         read_timeout=read_timeout,
+        results_format=results_format,
+        data_compression=data_compression,
+        geometry_representation=geometry_representation,
     )
 
 
@@ -129,6 +138,9 @@ def connect_direct(
     uri: str,
     headers: dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    results_format: ResultsFormat | None = None,
+    data_compression: DataCompression | None = None,
+    geometry_representation: GeometryRepresentation | None = None,
 ) -> Connection:
     q = queue.SimpleQueue()
 
@@ -156,4 +168,10 @@ def connect_direct(
     if isinstance(result, Exception):
         raise InterfaceError("Failed to connect to SQL session!") from result
 
-    return Connection(result, read_timeout)
+    return Connection(
+        result,
+        read_timeout=read_timeout,
+        results_format=results_format,
+        data_compression=data_compression,
+        geometry_representation=geometry_representation,
+    )
