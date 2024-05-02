@@ -58,3 +58,11 @@ class ResultsFormat(LowercaseStrEnum):
 
 class DataCompression(LowercaseStrEnum):
     BROTLI = auto()
+
+
+class GeometryRepresentation(LowercaseStrEnum):
+    WKT = auto()
+    WKB = auto()
+    EWKT = auto()
+    EWKB = auto()
+    GEOJSON = auto()
