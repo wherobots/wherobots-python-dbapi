@@ -12,6 +12,7 @@ DEFAULT_REGION: Region = Region.AWS_US_WEST_2
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 300
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
+PROTOCOL_VERSION: str = "1.0.0"
 
 
 class ExecutionState(LowercaseStrEnum):
