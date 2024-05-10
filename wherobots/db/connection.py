@@ -4,7 +4,7 @@ import textwrap
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Callable, Any
+from typing import Any, Callable, Union
 
 import cbor2
 import pyarrow
@@ -52,9 +52,9 @@ class Connection:
         self,
         ws: websockets.sync.client.ClientConnection,
         read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
-        results_format: ResultsFormat | None = None,
-        data_compression: DataCompression | None = None,
-        geometry_representation: GeometryRepresentation | None = None,
+        results_format: Union[ResultsFormat, None] = None,
+        data_compression: Union[DataCompression, None] = None,
+        geometry_representation: Union[GeometryRepresentation, None] = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout

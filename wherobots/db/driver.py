@@ -10,6 +10,7 @@ import queue
 import requests
 import tenacity
 import threading
+from typing import Union
 import websockets.sync.client
 
 from .constants import (
@@ -45,9 +46,9 @@ def connect(
     region: Region = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
-    results_format: ResultsFormat | None = None,
-    data_compression: DataCompression | None = None,
-    geometry_representation: GeometryRepresentation | None = None,
+    results_format: Union[ResultsFormat, None] = None,
+    data_compression: Union[DataCompression, None] = None,
+    geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -145,9 +146,9 @@ def connect_direct(
     uri: str,
     headers: dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
-    results_format: ResultsFormat | None = None,
-    data_compression: DataCompression | None = None,
-    geometry_representation: GeometryRepresentation | None = None,
+    results_format: Union[ResultsFormat, None] = None,
+    data_compression: Union[DataCompression, None] = None,
+    geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     q = queue.SimpleQueue()
     uri_with_protocol = append_protocol(uri, PROTOCOL_VERSION)
