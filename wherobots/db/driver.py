@@ -61,6 +61,7 @@ def connect(
     elif api_key:
         headers["X-API-Key"] = api_key
 
+    host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
     region = region or DEFAULT_REGION
 
