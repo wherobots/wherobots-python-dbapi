@@ -46,6 +46,7 @@ def connect(
     region: Region = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    shutdown_after_inactive_seconds: Union[int, None] = None,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
@@ -81,7 +82,10 @@ def connect(
         resp = requests.post(
             url=f"{host}/sql/session",
             params={"region": region.value},
-            json={"runtimeId": runtime.value},
+            json={
+                "runtimeId": runtime.value,
+                "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
+            },
             headers=headers,
         )
         resp.raise_for_status()
