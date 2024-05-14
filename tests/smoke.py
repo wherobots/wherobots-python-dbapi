@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from wherobots.db import connect, connect_direct
+from wherobots.db.constants import DEFAULT_ENDPOINT
 from wherobots.db.region import Region
 from wherobots.db.runtime import Runtime
 
@@ -24,7 +25,16 @@ if __name__ == "__main__":
         const=logging.DEBUG,
         default=logging.INFO,
     )
+    parser.add_argument(
+        "--api-endpoint",
+        help="Wherobots API endpoint to request a SQL session from",
+        default=DEFAULT_ENDPOINT,
+    )
     parser.add_argument("--ws-url", help="Direct URL to connect to")
+    parser.add_argument(
+        "--shutdown-after-inactive-seconds",
+        help="Request a specific SQL Session expiration timeout (in seconds)",
+    )
     parser.add_argument(
         "--wide", help="Enable wide output", action="store_const", const=80, default=30
     )
@@ -58,11 +68,12 @@ if __name__ == "__main__":
     else:
         conn_func = functools.partial(
             connect,
-            host="api.staging.wherobots.com",
+            host=args.api_endpoint,
             token=token,
             api_key=api_key,
             runtime=Runtime.SEDONA,
             region=Region.AWS_US_WEST_2,
+            shutdown_after_inactive_seconds=args.shutdown_after_inactive_seconds,
             wait_timeout=900,
         )
 
