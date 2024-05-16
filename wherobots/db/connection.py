@@ -132,7 +132,9 @@ class Connection:
             if query.state == ExecutionState.SUCCEEDED:
                 self.__request_results(execution_id)
             elif query.state == ExecutionState.FAILED:
-                query.handler(OperationalError("Query execution failed"))
+                # Don't do anything here; the ERROR event is coming with more
+                # details.
+                pass
 
         elif kind == EventKind.EXECUTION_RESULT:
             results = message.get("results")
