@@ -1,4 +1,4 @@
-# wherobots-python-dbapi-driver
+# wherobots-python-dbapi
 
 Python DB-API implementation for Wherobots DB. This package implements a
 PEP-0249 compatible driver to programmatically connect to a Wherobots DB
@@ -10,13 +10,13 @@ If you use [Poetry](https://python-poetry.org) in your project, add the
 dependency with `poetry add`:
 
 ```
-$ poetry add git+https://github.com/wherobots/wherobots-python-dbapi-driver
+$ poetry add wherobots-python-dbapi
 ```
 
 Otherwise, just `pip install` it:
 
 ```
-$ pip install git+https://github.com/wherobots/wherobots-python-dbapi-driver
+$ pip install wherobots-python-dbapi
 ```
 
 ## Usage
