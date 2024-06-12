@@ -142,11 +142,6 @@ def http_to_ws(uri: str) -> str:
     return str(urllib.parse.urlunparse(parsed))
 
 
-def append_protocol(uri: str, protocol: str) -> str:
-    """Appends the protocol version to the URI."""
-    return urllib.parse.urljoin(os.path.join(uri, ""), protocol)
-
-
 def connect_direct(
     uri: str,
     headers: dict[str, str] = None,
@@ -156,7 +151,7 @@ def connect_direct(
     geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     q = queue.SimpleQueue()
-    uri_with_protocol = append_protocol(uri, PROTOCOL_VERSION)
+    uri_with_protocol = f"{uri}/{PROTOCOL_VERSION}"
 
     def create_ws_connection():
         try:
