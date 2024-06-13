@@ -21,9 +21,10 @@ from .constants import (
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     MAX_MESSAGE_SIZE,
     PROTOCOL_VERSION,
-    ResultsFormat,
+    AppStatus,
     DataCompression,
     GeometryRepresentation,
+    ResultsFormat,
 )
 from .errors import (
     InterfaceError,
@@ -107,11 +108,11 @@ def connect(
         r = requests.get(session_id_url, headers=headers)
         r.raise_for_status()
         payload = r.json()
-        status = payload.get("status")
+        status = AppStatus(payload.get("status"))
         logging.info(" ... %s", status)
-        if status in ("REQUESTED", "DEPLOYING", "DEPLOYED", "INITIALIZING"):
+        if status.is_starting():
             raise tenacity.TryAgain("SQL Session is not ready yet")
-        elif status == "READY":
+        elif status == AppStatus.READY:
             return payload["appMeta"]["url"]
         else:
             logging.error("SQL session creation failed: %s; should not retry.", status)
@@ -120,6 +121,7 @@ def connect(
     try:
         logging.info("Getting SQL session status from %s ...", session_id_url)
         session_uri = get_session_uri()
+        logging.debug("SQL session URI from app status: %s", session_uri)
     except Exception as e:
         raise InterfaceError("Could not acquire SQL session!", e)
 
