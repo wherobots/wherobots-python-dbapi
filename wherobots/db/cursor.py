@@ -75,7 +75,10 @@ class Cursor:
         return results
 
     def fetchall(self):
-        return self.__get_results()[self.__current_row :]
+        results = self.__get_results()
+        if not results or self.__current_row >= len(results):
+            return []
+        return results[self.__current_row :]
 
     def close(self):
         """Close the cursor."""
