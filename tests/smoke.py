@@ -38,7 +38,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wide", help="Enable wide output", action="store_const", const=80, default=30
     )
-    parser.add_argument("sql", help="SQL query to execute")
+    parser.add_argument("sql", nargs="+", help="SQL query to execute")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -77,16 +77,18 @@ if __name__ == "__main__":
             wait_timeout=900,
         )
 
-    with conn_func() as conn:
-        cursor = conn.cursor()
-        cursor.execute(args.sql)
-        results: pandas.DataFrame = cursor.fetchall()
+    def render(results: pandas.DataFrame):
+        table = Table()
+        table.add_column("#")
+        for column in results.columns:
+            table.add_column(column, max_width=args.wide, no_wrap=True)
+        for row in results.itertuples(name=None):
+            r = [str(x) for x in row]
+            table.add_row(*r)
+        Console().print(table)
 
-    table = Table()
-    table.add_column("#")
-    for column in results.columns:
-        table.add_column(column, max_width=args.wide, no_wrap=True)
-    for row in results.itertuples(name=None):
-        r = [str(x) for x in row]
-        table.add_row(*r)
-    Console().print(table)
+    with conn_func() as conn:
+        for sql in args.sql:
+            with conn.cursor() as cursor:
+                cursor.execute(sql)
+                render(cursor.fetchall())
