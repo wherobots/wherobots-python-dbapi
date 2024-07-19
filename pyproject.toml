@@ -39,3 +39,6 @@ max-line-length = "88"
 [tool.mypy]
 strict = true
 show_error_codes = true
+
+[tool.poetry.plugins."sqlalchemy.dialects"]
+wherobots1 = "wherobots.db.wherobots_sqlalchemy1:WherobotsDialect1"

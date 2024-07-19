@@ -59,7 +59,7 @@ class Cursor:
             raise ProgrammingError("No query has been executed yet")
         if self.__results is not None:
             print(f"\n       1 - type(self.__results): {type(self.__results)}\n")
-            # print(f"\n       1 - self.__results: {self.__results}\n")
+            print(f"\n       1 - self.__results: {self.__results}\n")
             print(f"\n       1 - self.__rowcount: {self.__rowcount}\n")
             print(f"\n       1 - self.__current_row: {self.__current_row}\n")
             print(f"\n       1 - self.__description: {self.__description}\n")
@@ -67,7 +67,7 @@ class Cursor:
 
         columns, column_types, rows = self.__queue.get()
         print(f"\n       2 - type(rows): {type(rows)}\n")
-        # print(f"\n       2 - rows: {rows}\n")
+        print(f"\n       2 - rows: {rows}\n")
         if isinstance(rows, DatabaseError):
             raise rows
 
