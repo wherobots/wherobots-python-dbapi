@@ -1,7 +1,17 @@
 import queue
-from typing import Any, Optional
+from typing import Any, Optional, List, Tuple
 
 from .errors import ProgrammingError, DatabaseError
+
+_TYPE_MAP = {
+    "object": "STRING",
+    "int64": "NUMBER",
+    "float64": "NUMBER",
+    "datetime64[ns]": "DATETIME",
+    "timedelta[ns]": "DATETIME",
+    "bool": "NUMBER",  # Assuming boolean is stored as number
+    "bytes": "BINARY",
+}
 
 
 class Cursor:
@@ -17,14 +27,14 @@ class Cursor:
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
-        self.__description: Optional[str] = None
+        self.__description: Optional[List[Tuple]] = None
         self.__rowcount: int = -1
 
         # Array-size is also defined by PEP-0249 and is expected to be read/writable.
         self.arraysize: int = 1
 
     @property
-    def description(self) -> Optional[str]:
+    def description(self) -> Optional[List[Tuple]]:
         return self.__description
 
     @property
@@ -34,7 +44,7 @@ class Cursor:
     def __on_execution_result(self, result) -> None:
         self.__queue.put(result)
 
-    def __get_results(self) -> Optional[list[Any]]:
+    def __get_results(self) -> Optional[List[Tuple[Any, ...]]]:
         if not self.__current_execution_id:
             raise ProgrammingError("No query has been executed yet")
         if self.__results is not None:
@@ -43,8 +53,23 @@ class Cursor:
         result = self.__queue.get()
         if isinstance(result, DatabaseError):
             raise result
+
         self.__rowcount = len(result)
         self.__results = result
+        if not result.empty:
+            self.__description = [
+                (
+                    col_name,  # name
+                    _TYPE_MAP.get(str(result[col_name].dtype), "STRING"),  # type_code
+                    None,  # display_size
+                    result[col_name].memory_usage(),  # internal_size
+                    None,  # precision
+                    None,  # scale
+                    True,  # null_ok; Assuming all columns can accept NULL values
+                )
+                for col_name in result.columns
+            ]
+
         return self.__results
 
     def execute(self, operation: str, parameters: dict[str, Any] = None):
@@ -54,6 +79,7 @@ class Cursor:
         self.__results = None
         self.__current_row = 0
         self.__rowcount = -1
+        self.__description = None
 
         sql = operation.format(**(parameters or {}))
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
