@@ -24,6 +24,8 @@ from wherobots.db.constants import (
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Query:
@@ -56,6 +58,7 @@ class Connection:
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
     ):
+        logger.info(f"__init__() - running...")
         self.__ws = ws
         self.__read_timeout = read_timeout
         self.__results_format = results_format
@@ -69,12 +72,15 @@ class Connection:
         self.__thread.start()
 
     def __enter__(self):
+        logger.info(f"__enter__() - running...")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.info(f"__exit__() - running...")
         self.close()
 
     def close(self):
+        logger.info(f"close() - running...")
         self.__ws.close()
 
     def commit(self):
@@ -84,48 +90,58 @@ class Connection:
         raise NotSupportedError
 
     def cursor(self) -> Cursor:
+        logger.info(f"cursor() - running...")
         return Cursor(self.__execute_sql, self.__cancel_query)
 
     def __main_loop(self):
+        logger.info(f"__main_loop() - running...")
         """Main background loop listening for messages from the SQL session."""
-        logging.info("Starting background connection handling loop...")
+        logging.info("__main_loop() - Starting background connection handling loop...")
         while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
             try:
                 self.__listen()
             except TimeoutError:
+                logger.info(f"__main_loop() - TimeoutError")
                 # Expected, retry next time
                 continue
             except websockets.exceptions.ConnectionClosedOK:
-                logging.info("Connection closed; stopping main loop.")
+                logging.info("__main_loop() - Connection closed; stopping main loop.")
                 return
             except Exception as e:
-                logging.exception("Error handling message from SQL session", exc_info=e)
+                logging.exception("__main_loop() - Error handling message from SQL session", exc_info=e)
 
     def __listen(self):
         """Waits for the next message from the SQL session and processes it.
 
         The code in this method is purposefully defensive to avoid unexpected situations killing the thread.
         """
+        logger.info(f"__listen() - running...")
         message = self.__recv()
+        logger.info(f"__listen() - message - {message}")
         kind = message.get("kind")
+        logger.info(f"__listen() - kind - {kind}")
         execution_id = message.get("execution_id")
+        logger.info(f"__listen() - execution_id - {execution_id}")
         if not kind or not execution_id:
+            logger.info(f"__listen() - Invalid event")
             # Invalid event.
             return
 
         query = self.__queries.get(execution_id)
         if not query:
+            logger.info(f"__listen() - Logging not query")
             logging.warning(
                 "Received %s event for unknown execution ID %s", kind, execution_id
             )
             return
 
         if kind == EventKind.STATE_UPDATED:
+            logger.info(f"__listen() - kind is EventKind.STATE_UPDATED - {EventKind.STATE_UPDATED}")
             try:
                 query.state = ExecutionState[message["state"].upper()]
                 logging.info("Query %s is now %s.", execution_id, query.state)
             except KeyError:
-                logging.warning("Invalid state update message for %s", execution_id)
+                logging.warning("__listen() - Invalid state update message for %s", execution_id)
                 return
 
             # Incoming state transitions are handled here.
@@ -137,9 +153,10 @@ class Connection:
                 pass
 
         elif kind == EventKind.EXECUTION_RESULT:
+            logger.info(f"__listen() - kind is EventKind.EXECUTION_RESULT - {EventKind.EXECUTION_RESULT}")
             results = message.get("results")
             if not results or not isinstance(results, dict):
-                logging.warning("Got no results back from %s.", execution_id)
+                logging.warning("__listen() - Got no results back from %s.", execution_id)
                 return
 
             result_bytes = results.get("result_bytes")
@@ -174,6 +191,7 @@ class Connection:
                     OperationalError(f"Unsupported results format {result_format}")
                 )
         elif kind == EventKind.ERROR:
+            logger.info(f"__listen() - kind is EventKind.ERROR - {EventKind.ERROR}")
             query.state = ExecutionState.FAILED
             error = message.get("message")
             query.handler(OperationalError(error))
@@ -181,21 +199,29 @@ class Connection:
             logging.warning("Received unknown %s event!", kind)
 
     def __send(self, message: dict[str, Any]) -> None:
+        logger.info(f"__main_loop() - running...")
         request = json.dumps(message)
         logging.debug("Request: %s", request)
         self.__ws.send(request)
 
     def __recv(self) -> dict[str, Any]:
+        logger.info(f"__recv() - running...")
         frame = self.__ws.recv(timeout=self.__read_timeout)
+        logger.info(f"__recv() - frame - {frame}")
         if isinstance(frame, str):
+            logger.info(f"__recv() - frame instance 'str'")
             message = json.loads(frame)
         elif isinstance(frame, bytes):
+            logger.info(f"__recv() - frame instance 'bytes'")
             message = cbor2.loads(frame)
         else:
-            raise ValueError("Unexpected frame type received")
+            logger.info(f"__recv() - raising ValueError")
+            raise ValueError("__recv() - Unexpected frame type received")
+        logger.info(f"__recv() - message - {message}")
         return message
 
     def __execute_sql(self, sql: str, handler: Callable[[Any], None]) -> str:
+        logger.info(f"__execute_sql() - running...")
         """Triggers the execution of the given SQL query."""
         execution_id = str(uuid.uuid4())
         request = {
@@ -218,6 +244,7 @@ class Connection:
         return execution_id
 
     def __request_results(self, execution_id: str) -> None:
+        logger.info(f"__request_results() - running...")
         query = self.__queries.get(execution_id)
         if not query:
             return
@@ -238,7 +265,8 @@ class Connection:
         self.__send(request)
 
     def __cancel_query(self, execution_id: str) -> None:
+        logger.info(f"__cancel_query() - running...")
         query = self.__queries.pop(execution_id)
         if query:
-            logging.info("Cancelled query %s.", execution_id)
+            logging.info("__cancel_query() - Cancelled query %s.", execution_id)
             # TODO: when protocol supports it, send cancellation request.
