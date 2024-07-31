@@ -1,6 +1,7 @@
 import logging
 import queue
 from typing import Any, Optional, List, Tuple
+import re
 
 from .errors import ProgrammingError, DatabaseError
 
@@ -45,7 +46,7 @@ class Cursor:
     @property
     def description(self) -> Optional[List[Tuple]]:
         logger.info(f"description() - running...")
-        logger.info(f"description() - self.__description: {self.__description}")
+        # logger.info(f"description() - self.__description: {self.__description}")
         return self.__description
 
     @property
@@ -55,6 +56,7 @@ class Cursor:
 
     def __on_execution_result(self, result) -> None:
         logger.info(f"__on_execution_result() - running...")
+        # logger.info(f"__on_execution_result() - result - {result}")
         self.__queue.put(result)
 
     def __get_results(self) -> Optional[List[Tuple[Any, ...]]]:
@@ -62,16 +64,20 @@ class Cursor:
         if not self.__current_execution_id:
             raise ProgrammingError("__get_results() - No query has been executed yet")
         if self.__results is not None:
-            logger.info(f"__get_results() - 1 - type(self.__results): {type(self.__results)}")
-            logger.info(f"__get_results() - 1 - self.__results: {self.__results}")
-            logger.info(f"__get_results() - 1 - self.__rowcount: {self.__rowcount}")
-            logger.info(f"__get_results() - 1 - self.__current_row: {self.__current_row}")
-            logger.info(f"__get_results() - 1 - self.__description: {self.__description}")
+            # logger.info(f"__get_results() - 1 - type(self.__results): {type(self.__results)}")
+            # logger.info(f"__get_results() - 1 - self.__results: {self.__results}")
+            # logger.info(f"__get_results() - 1 - self.__rowcount: {self.__rowcount}")
+            # logger.info(f"__get_results() - 1 - self.__current_row: {self.__current_row}")
+            # logger.info(f"__get_results() - 1 - self.__description: {self.__description}")
             return self.__results
 
+        # logger.info(f"__get_results() - self.__queue.get() - {self.__queue.get()}")
+        # raise ProgrammingError("breaking!!")
+
         columns, column_types, rows = self.__queue.get()
-        logger.info(f"__get_results() - 2 - type(rows): {type(rows)}")
-        logger.info(f"__get_results() - 2 - rows: {rows}")
+
+        # logger.info(f"__get_results() - 2 - type(rows): {type(rows)}")
+        # logger.info(f"__get_results() - 2 - rows: {rows}")
         if isinstance(rows, DatabaseError):
             raise DatabaseError
 
@@ -90,9 +96,9 @@ class Cursor:
                 )
                 for i, col_name in enumerate(columns)
             ]
-        logger.info(f"__get_results() - 2 - self.__rowcount: {self.__rowcount}")
-        logger.info(f"__get_results() - 2 - self.__current_row: {self.__current_row}")
-        logger.info(f"__get_results() - 2 - self.__description: {self.__description}")
+        # logger.info(f"__get_results() - 2 - self.__rowcount: {self.__rowcount}")
+        # logger.info(f"__get_results() - 2 - self.__current_row: {self.__current_row}")
+        # logger.info(f"__get_results() - 2 - self.__description: {self.__description}")
         return self.__results
 
     def execute(self, operation: str, parameters: dict[str, Any] = None):
@@ -106,6 +112,9 @@ class Cursor:
         self.__description = None
 
         sql = operation.format(**(parameters or {}))
+        # sql = self._modify_statement(sql)
+        # sql = self._sanitize_query(sql)
+        logger.info(f"execute() - sql - {sql}")
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
     def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
@@ -119,7 +128,7 @@ class Cursor:
             logger.info(f"fetchone() - results is empty; returns None")
             return None
         self.__current_row += 1
-        logger.info(f"fetchone() - results[0]: {results[0]}")
+        # logger.info(f"fetchone() - results[0]: {results[0]}")
         return results[0]
 
     def fetchmany(self, size: int = None):

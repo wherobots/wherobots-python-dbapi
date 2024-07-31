@@ -57,6 +57,8 @@ class Connection:
         results_format: Union[ResultsFormat, None] = None,
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
+        catalog: str = None,
+        schema: str = None,
     ):
         logger.info(f"__init__() - running...")
         self.__ws = ws
@@ -70,6 +72,8 @@ class Connection:
             target=self.__main_loop, daemon=True, name="wherobots-connection"
         )
         self.__thread.start()
+        self.__schema = schema
+        self.__catalog = catalog
 
     def __enter__(self):
         logger.info(f"__enter__() - running...")
@@ -84,11 +88,12 @@ class Connection:
         self.__ws.close()
 
     def commit(self):
-        raise NotSupportedError
+        # raise NotSupportedError
+        pass
 
     def rollback(self):
-        raise NotSupportedError
-
+        # raise NotSupportedError
+        pass
     def cursor(self) -> Cursor:
         logger.info(f"cursor() - running...")
         return Cursor(self.__execute_sql, self.__cancel_query)
@@ -101,7 +106,6 @@ class Connection:
             try:
                 self.__listen()
             except TimeoutError:
-                logger.info(f"__main_loop() - TimeoutError")
                 # Expected, retry next time
                 continue
             except websockets.exceptions.ConnectionClosedOK:
@@ -155,6 +159,7 @@ class Connection:
         elif kind == EventKind.EXECUTION_RESULT:
             logger.info(f"__listen() - kind is EventKind.EXECUTION_RESULT - {EventKind.EXECUTION_RESULT}")
             results = message.get("results")
+            # logger.info(f"__listen() - results - {results}")
             if not results or not isinstance(results, dict):
                 logging.warning("__listen() - Got no results back from %s.", execution_id)
                 return
@@ -176,6 +181,7 @@ class Connection:
                 columns = data["columns"]
                 column_types = data.get("column_types")
                 rows = data["rows"]
+                rows = self.__geojson_handler(rows, columns)
                 query.handler((columns, column_types, rows))
             elif result_format == ResultsFormat.ARROW:
                 buffer = pyarrow.py_buffer(result_bytes)
@@ -185,6 +191,7 @@ class Connection:
                     columns = schema.names
                     column_types = [field.type for field in schema]
                     rows = reader.read_all().to_pandas().values.tolist()
+                    rows = self.__geojson_handler(rows, columns)
                     query.handler((columns, column_types, rows))
             else:
                 query.handler(
@@ -194,9 +201,32 @@ class Connection:
             logger.info(f"__listen() - kind is EventKind.ERROR - {EventKind.ERROR}")
             query.state = ExecutionState.FAILED
             error = message.get("message")
+            logger.info(f"__listen() - error - {error}")
             query.handler(OperationalError(error))
         else:
             logging.warning("Received unknown %s event!", kind)
+
+    def __geojson_handler(self, rows, columns):
+        logger.info(f"_geojson_handler() - running...")
+        # logger.info(f"_geojson_handler() - rows - {rows}")
+        idx = -1
+        for i, col in enumerate(columns):
+            if col == "geojson" or col == "ST_AsGeoJSON(geometry)":
+                idx = i
+                break
+
+        if idx == -1:
+            return rows
+
+        modified_rows = []
+        for row in rows:
+            row[idx] = '{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {}, "geometry": ' + \
+                              row[idx] + '} ] }'
+            modified_rows.append(row)
+
+        # logger.info(f"_geojson_handler() - modified data - {modified_rows}")
+
+        return modified_rows
 
     def __send(self, message: dict[str, Any]) -> None:
         logger.info(f"__main_loop() - running...")
@@ -217,7 +247,7 @@ class Connection:
         else:
             logger.info(f"__recv() - raising ValueError")
             raise ValueError("__recv() - Unexpected frame type received")
-        logger.info(f"__recv() - message - {message}")
+        # logger.info(f"__recv() - message - {message}")
         return message
 
     def __execute_sql(self, sql: str, handler: Callable[[Any], None]) -> str:

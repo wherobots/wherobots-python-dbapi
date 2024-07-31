@@ -41,4 +41,4 @@ strict = true
 show_error_codes = true
 
 [tool.poetry.plugins."sqlalchemy.dialects"]
-wherobots1 = "wherobots.db.wherobots_sqlalchemy1:WherobotsDialect1"
+Wherobots = "wherobots.db.wherobots_sqlalchemy:WherobotsDialect"

@@ -51,6 +51,9 @@ def connect(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    ws_url: str = None,
+    catalog: str = None,
+    schema: str = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -76,54 +79,57 @@ def connect(
     )
 
     # Default to HTTPS if the hostname doesn't explicitly specify a scheme.
-    if not host.startswith("http:"):
-        host = f"https://{host}"
+    if ws_url:
+        session_uri = ws_url
+    else:
+        if not host.startswith("http:"):
+            host = f"https://{host}"
 
-    try:
-        resp = requests.post(
-            url=f"{host}/sql/session",
-            params={"region": region.value},
-            json={
-                "runtimeId": runtime.value,
-                "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
-            },
-            headers=headers,
+        try:
+            resp = requests.post(
+                url=f"{host}/sql/session",
+                params={"region": region.value},
+                json={
+                    "runtimeId": runtime.value,
+                    "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
+                },
+                headers=headers,
+            )
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            raise InterfaceError("Failed to create SQL session!", e)
+
+        # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
+        # session is in READY state.
+        session_id_url = resp.url
+
+        @tenacity.retry(
+            stop=tenacity.stop_after_delay(wait_timeout),
+            wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
+            retry=tenacity.retry_if_not_exception_type(
+                (requests.HTTPError, OperationalError)
+            ),
         )
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        raise InterfaceError("Failed to create SQL session!", e)
+        def get_session_uri() -> str:
+            r = requests.get(session_id_url, headers=headers)
+            r.raise_for_status()
+            payload = r.json()
+            status = AppStatus(payload.get("status"))
+            logging.info(" ... %s", status)
+            if status.is_starting():
+                raise tenacity.TryAgain("SQL Session is not ready yet")
+            elif status == AppStatus.READY:
+                return payload["appMeta"]["url"]
+            else:
+                logging.error("SQL session creation failed: %s; should not retry.", status)
+                raise OperationalError(f"Failed to create SQL session: {status}")
 
-    # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
-    # session is in READY state.
-    session_id_url = resp.url
-
-    @tenacity.retry(
-        stop=tenacity.stop_after_delay(wait_timeout),
-        wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
-        retry=tenacity.retry_if_not_exception_type(
-            (requests.HTTPError, OperationalError)
-        ),
-    )
-    def get_session_uri() -> str:
-        r = requests.get(session_id_url, headers=headers)
-        r.raise_for_status()
-        payload = r.json()
-        status = AppStatus(payload.get("status"))
-        logging.info(" ... %s", status)
-        if status.is_starting():
-            raise tenacity.TryAgain("SQL Session is not ready yet")
-        elif status == AppStatus.READY:
-            return payload["appMeta"]["url"]
-        else:
-            logging.error("SQL session creation failed: %s; should not retry.", status)
-            raise OperationalError(f"Failed to create SQL session: {status}")
-
-    try:
-        logging.info("Getting SQL session status from %s ...", session_id_url)
-        session_uri = get_session_uri()
-        logging.debug("SQL session URI from app status: %s", session_uri)
-    except Exception as e:
-        raise InterfaceError("Could not acquire SQL session!", e)
+        try:
+            logging.info("Getting SQL session status from %s ...", session_id_url)
+            session_uri = get_session_uri()
+            logging.debug("SQL session URI from app status: %s", session_uri)
+        except Exception as e:
+            raise InterfaceError("Could not acquire SQL session!", e)
 
     return connect_direct(
         uri=http_to_ws(session_uri),
@@ -132,8 +138,9 @@ def connect(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        catalog = None,
+        schema = None
     )
-
 
 def http_to_ws(uri: str) -> str:
     """Converts an HTTP URI to a WebSocket URI."""
@@ -151,6 +158,8 @@ def connect_direct(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    catalog: str = None,
+    schema: str = None,
 ) -> Connection:
     q = queue.SimpleQueue()
     uri_with_protocol = f"{uri}/{PROTOCOL_VERSION}"
@@ -185,4 +194,6 @@ def connect_direct(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        catalog=catalog,
+        schema=schema,
     )
