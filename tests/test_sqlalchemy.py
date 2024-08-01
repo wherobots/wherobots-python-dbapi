@@ -16,12 +16,10 @@ for name, dialect in dialects.items():
 
 # Define connection details
 host = 'localhost'
-api_key = '629324d9-418c-4c4b-bfde-7a130cffb512'
-staging_dbapi_key = 'f64f972f-c4eb-4b2d-bb3e-96838ebba4d9'
 runtime = 'SAN_FRANCISCO'
 region = 'AWS_US_WEST_2'
 ws_url = 'wss://wbc.cloud.wherobots.com/sql/nnla3muxj9/dv7gcfijtwa3r1'
-staging_ws_url='wss://wbc.staging.wherobots.com/sql/hkny39iypq/ahxb5l893vbub2'
+staging_ws_url='wss://wbc.staging.wherobots.com/sql/hkny39iypq/dqdiqr7kje5qdf'
 catalog = "wherobots_pro_data"
 
 # Construct the database URL
@@ -50,12 +48,40 @@ with engine.connect() as connection:
         print("\n\n\n", row)
 
     # result = connection.execute('SHOW TABLES IN overture')
-    result = connection.execute("SELECT COUNT(*) AS `COUNT(*)` FROM wherobots_open_data.overture.places_place LIMIT 10")
-    for row in result:
-        print("\n\n\n", row)
+    # result = connection.execute("SELECT geojson2 AS geojson2 FROM ( SELECT ST_ASGEOJSON(geometry) AS geojson, ST_ASGEOJSON(geometry, 'featureCollection') AS geojson2, geometry FROM wherobots_open_data.overture_2024_07_22.buildings_building ) AS virtual_table LIMIT 5")
+    # print("\n\n\nresult - ", result)
+    # for row in result:
+    #     print("\n\n\n", row)
 
-    dialect = WherobotsDialect()
-    schemas = dialect.get_schema_names(connection)
-    print("\n\n\nSchemas:", schemas)
+    # dialect = WherobotsDialect()
+    # schemas = dialect.get_schema_names(connection)
+    # print("\n\n\nSchemas:", schemas)
 
-print(db_url)
+import re
+
+# normalized_query = "SELECT geojson2 AS geojson2 FROM ( SELECT ST_ASGEOJSON(geometry) AS geojson, ST_ASGEOJSON(geometry, 'featureCollection') AS geojson2, geometry FROM wherobots_open_data.overture_2024_07_22.buildings_building ) AS virtual_table GROUP BY geojson2 LIMIT 50"
+
+# print("\nnormalized_query: %s\n", normalized_query)
+#
+# # Extract aliases for ST_AsGeoJSON with any parameters in the SELECT statement
+# select_clause = re.search(r"SELECT (.*) FROM", normalized_query, re.IGNORECASE)
+# if select_clause:
+#     select_fields = select_clause.group(1)
+#     geojson_aliases = re.findall(r"ST_AsGeoJSON\([^\)]*\)(?:\s+AS\s+(\w+))?", select_fields, re.IGNORECASE)
+#     print("\nFound geojson aliases: %s\n", geojson_aliases)
+#
+#     # Add the original function name with any parameters to the list of aliases
+#     geojson_aliases.append(r"ST_AsGeoJSON\([^\)]*\)")
+#
+#     # Construct regex to remove GROUP BY clauses for these aliases
+#     for alias in geojson_aliases:
+#         if alias:
+#             # Ensure we match the alias exactly, followed by space or end of string
+#             regex = re.compile(rf"GROUP BY\s+{alias}(?=\s|$)", re.IGNORECASE)
+#             normalized_query = re.sub(regex, "", normalized_query)
+#
+# print("\nModified query after removing GROUP BY on ST_AsGeoJSON aliases: %s\n", normalized_query)
+
+
+
+print("\n\n",db_url)

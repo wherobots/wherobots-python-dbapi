@@ -6,16 +6,14 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 
-dbapi_key = '629324d9-418c-4c4b-bfde-7a130cffb512'
-staging_dbapi_key = 'f64f972f-c4eb-4b2d-bb3e-96838ebba4d9'
-
 with connect(
         host=STAGING_ENDPOINT,
         api_key=staging_dbapi_key,
+        # api_key=dbapi_key,
         runtime=Runtime.SAN_FRANCISCO,
         region=Region.AWS_US_WEST_2,
         # ws_url='wss://wbc.cloud.wherobots.com/sql/nnla3muxj9/ujwk78awwu949l',
-        ws_url='wss://wbc.staging.wherobots.com/sql/hkny39iypq/ahxb5l893vbub2'
+        # ws_url='wss://wbc.staging.wherobots.com/sql/hkny39iypq/6knlwynt3kdddm'
 ) as conn:
     curr = conn.cursor()
 
@@ -32,4 +30,13 @@ with connect(
     results = curr.fetchall()
     print("\n\n\n")
     print(results)
+    print("\n\n\n")
+
+    # curr.execute("SELECT * FROM wherobots_open_data.overture_2024_07_22.buildings_building")
+    # curr.execute("SELECT geojson2 AS geojson2 FROM ( SELECT ST_ASGEOJSON(geometry, 'featureCollection') AS geojson2, geometry FROM wherobots_open_data.overture_2024_07_22.buildings_building ) AS virtual_table  LIMIT 5")
+    results = curr.fetchall()
+    print("\n\n\n")
+    for row in results:
+        print(row)
+    # print(results)
     print("\n\n\n")
