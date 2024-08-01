@@ -4,11 +4,14 @@ from typing import Any, Optional, List, Tuple
 from .errors import ProgrammingError, DatabaseError
 
 _TYPE_MAP = {
+    "object": "STRING",
     "string": "STRING",
     "int32": "NUMBER",
     "int64": "NUMBER",
     "float32": "NUMBER",
     "float64": "NUMBER",
+    "datetime64[ns]": "DATETIME",
+    "timedelta[ns]": "DATETIME",
     "double": "NUMBER",
     "bool": "NUMBER",  # Assuming boolean is stored as number
     "bytes": "BINARY",
