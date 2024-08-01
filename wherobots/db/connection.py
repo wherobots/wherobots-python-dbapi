@@ -155,12 +155,20 @@ class Connection:
 
             query.state = ExecutionState.COMPLETED
             if result_format == ResultsFormat.JSON:
-                query.handler(json.loads(result_bytes.decode("utf-8")))
+                data = json.loads(result_bytes.decode("utf-8"))
+                columns = data["columns"]
+                column_types = data.get("column_types")
+                rows = data["rows"]
+                query.handler((columns, column_types, rows))
             elif result_format == ResultsFormat.ARROW:
                 buffer = pyarrow.py_buffer(result_bytes)
                 stream = pyarrow.input_stream(buffer, result_compression)
                 with pyarrow.ipc.open_stream(stream) as reader:
-                    query.handler(reader.read_pandas())
+                    schema = reader.schema
+                    columns = schema.names
+                    column_types = [field.type for field in schema]
+                    rows = reader.read_all().to_pandas().values.tolist()
+                    query.handler((columns, column_types, rows))
             else:
                 query.handler(
                     OperationalError(f"Unsupported results format {result_format}")

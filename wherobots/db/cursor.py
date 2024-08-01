@@ -4,13 +4,17 @@ from typing import Any, Optional, List, Tuple
 from .errors import ProgrammingError, DatabaseError
 
 _TYPE_MAP = {
-    "object": "STRING",
+    "string": "STRING",
+    "int32": "NUMBER",
     "int64": "NUMBER",
+    "float32": "NUMBER",
     "float64": "NUMBER",
-    "datetime64[ns]": "DATETIME",
-    "timedelta[ns]": "DATETIME",
+    "double": "NUMBER",
     "bool": "NUMBER",  # Assuming boolean is stored as number
     "bytes": "BINARY",
+    "struct": "STRUCT",
+    "list": "LIST",
+    "geometry": "GEOMETRY"
 }
 
 
@@ -50,24 +54,24 @@ class Cursor:
         if self.__results is not None:
             return self.__results
 
-        result = self.__queue.get()
-        if isinstance(result, DatabaseError):
-            raise result
+        columns, column_types, rows = self.__queue.get()
+        if isinstance(rows, DatabaseError):
+            raise rows
 
-        self.__rowcount = len(result)
-        self.__results = result
-        if not result.empty:
+        self.__rowcount = len(rows)
+        self.__results = rows
+        if rows:
             self.__description = [
                 (
                     col_name,  # name
-                    _TYPE_MAP.get(str(result[col_name].dtype), "STRING"),  # type_code
+                    _TYPE_MAP.get(str(column_types[i]), "STRING"),  # type_code
                     None,  # display_size
-                    result[col_name].memory_usage(),  # internal_size
+                    None,  # internal_size
                     None,  # precision
                     None,  # scale
                     True,  # null_ok; Assuming all columns can accept NULL values
                 )
-                for col_name in result.columns
+                for i, col_name in enumerate(columns)
             ]
 
         return self.__results
