@@ -1,11 +1,7 @@
-import logging
 import queue
 from typing import Any, Optional, List, Tuple
 
 from .errors import ProgrammingError, DatabaseError
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 _TYPE_MAP = {
     "string": "STRING",
@@ -25,7 +21,6 @@ _TYPE_MAP = {
 class Cursor:
 
     def __init__(self, exec_fn, cancel_fn):
-        logger.info(f"__init__() - running...")
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
 
@@ -44,31 +39,26 @@ class Cursor:
 
     @property
     def description(self) -> Optional[List[Tuple]]:
-        logger.info(f"description() - running...")
-        # logger.info(f"description() - self.__description: {self.__description}")
         return self.__description
 
     @property
     def rowcount(self) -> int:
-        logger.info(f"rowcount() - running...")
         return self.__rowcount
 
     def __on_execution_result(self, result) -> None:
-        logger.info(f"__on_execution_result() - running...")
-        # logger.info(f"__on_execution_result() - result - {result}")
         self.__queue.put(result)
 
     def __get_results(self) -> Optional[List[Tuple[Any, ...]]]:
-        logger.info(f"__get_results() - running...")
         if not self.__current_execution_id:
-            raise ProgrammingError("__get_results() - No query has been executed yet")
+            raise ProgrammingError("No query has been executed yet")
         if self.__results is not None:
             return self.__results
 
-        columns, column_types, rows = self.__queue.get()
-        if isinstance(rows, DatabaseError):
-            raise rows
+        result = self.__queue.get()
+        if isinstance(result, DatabaseError):
+            raise result
 
+        columns, column_types, rows = result
         self.__rowcount = len(rows)
         self.__results = rows
         if rows:
@@ -88,7 +78,6 @@ class Cursor:
         return self.__results
 
     def execute(self, operation: str, parameters: dict[str, Any] = None):
-        logger.info(f"execute() - running...")
         if self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
@@ -98,51 +87,39 @@ class Cursor:
         self.__description = None
 
         sql = operation.format(**(parameters or {}))
-        logger.info(f"execute() - sql - {sql}")
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
     def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
-        logger.info(f"executemany() - running...")
         raise NotImplementedError
 
     def fetchone(self):
-        logger.info(f"fetchone() - running...")
         results = self.__get_results()[self.__current_row :]
         if not results:
-            logger.info(f"fetchone() - results is empty; returns None")
             return None
         self.__current_row += 1
-        # logger.info(f"fetchone() - results[0]: {results[0]}")
         return results[0]
 
     def fetchmany(self, size: int = None):
-        logger.info(f"fetchmany() - running...")
         size = size or self.arraysize
         results = self.__get_results()[self.__current_row : self.__current_row + size]
         self.__current_row += size
         return results
 
     def fetchall(self):
-        logger.info(f"fetchall() - running...")
         return self.__get_results()[self.__current_row :]
 
     def close(self):
-        logger.info(f"close() - running...")
         """Close the cursor."""
         pass
 
     def __iter__(self):
-        logger.info(f"__iter__() - running...")
         return self
 
     def __next__(self):
-        logger.info(f"__next__() - running...")
         raise StopIteration
 
     def __enter__(self):
-        logger.info(f"__enter__() - running...")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        logger.info(f"__exit__() - running...")
         self.close()
