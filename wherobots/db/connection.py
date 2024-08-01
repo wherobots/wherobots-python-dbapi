@@ -78,11 +78,10 @@ class Connection:
         self.__ws.close()
 
     def commit(self):
-        raise NotSupportedError
+        pass
 
     def rollback(self):
-        raise NotSupportedError
-
+        pass
     def cursor(self) -> Cursor:
         return Cursor(self.__execute_sql, self.__cancel_query)
 
