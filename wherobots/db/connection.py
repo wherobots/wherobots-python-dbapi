@@ -82,6 +82,7 @@ class Connection:
 
     def rollback(self):
         pass
+
     def cursor(self) -> Cursor:
         return Cursor(self.__execute_sql, self.__cancel_query)
 
@@ -166,7 +167,7 @@ class Connection:
                     schema = reader.schema
                     columns = schema.names
                     column_types = [field.type for field in schema]
-                    rows = reader.read_all().to_pandas().values.tolist()
+                    rows = reader.read_pandas().values.tolist()
                     query.handler((columns, column_types, rows))
             else:
                 query.handler(
