@@ -17,7 +17,7 @@ _TYPE_MAP = {
     "bytes": "BINARY",
     "struct": "STRUCT",
     "list": "LIST",
-    "geometry": "GEOMETRY"
+    "geometry": "GEOMETRY",
 }
 
 
