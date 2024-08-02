@@ -4,7 +4,6 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
 import logging
-import os
 import urllib.parse
 import queue
 import requests
@@ -51,6 +50,7 @@ def connect(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    ws_url: str = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -66,6 +66,24 @@ def connect(
     host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
     region = region or DEFAULT_REGION
+
+    if ws_url:
+        logging.info(
+            "Using existing %s/%s runtime in %s from %s ...",
+            runtime.name,
+            runtime.value,
+            region.value,
+            host,
+        )
+        session_uri = ws_url
+        return connect_direct(
+            uri=http_to_ws(session_uri),
+            headers=headers,
+            read_timeout=read_timeout,
+            results_format=results_format,
+            data_compression=data_compression,
+            geometry_representation=geometry_representation,
+        )
 
     logging.info(
         "Requesting %s/%s runtime in %s from %s ...",
