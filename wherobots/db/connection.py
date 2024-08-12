@@ -72,8 +72,6 @@ class Connection:
             target=self.__main_loop, daemon=True, name="wherobots-connection"
         )
         self.__thread.start()
-        self.__schema = schema
-        self.__catalog = catalog
 
     def __enter__(self):
         logger.info(f"__enter__() - running...")

@@ -74,7 +74,13 @@ class Cursor:
         # logger.info(f"__get_results() - self.__queue.get() - {self.__queue.get()}")
         # raise ProgrammingError("breaking!!")
 
-        columns, column_types, rows = self.__queue.get()
+        result = self.__queue.get()
+        if isinstance(result, DatabaseError):
+            raise result
+
+        columns, column_types, rows = result
+        self.__rowcount = len(rows)
+        self.__results = rows
 
         # logger.info(f"__get_results() - 2 - type(rows): {type(rows)}")
         # logger.info(f"__get_results() - 2 - rows: {rows}")
