@@ -1,5 +1,6 @@
 import json
 import logging
+from packaging.version import Version
 import textwrap
 import threading
 import uuid
@@ -14,6 +15,8 @@ import websockets.sync.client
 
 from wherobots.db.constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
+    PROTOCOL_VERSION,
+    MIN_VERSION_FOR_CANCEL,
     RequestKind,
     EventKind,
     ExecutionState,
@@ -51,12 +54,14 @@ class Connection:
     def __init__(
         self,
         ws: websockets.sync.client.ClientConnection,
+        protocol: Version = PROTOCOL_VERSION,
         read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
         results_format: Union[ResultsFormat, None] = None,
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
     ):
         self.__ws = ws
+        self.__protocol = protocol
         self.__read_timeout = read_timeout
         self.__results_format = results_format
         self.__data_compression = data_compression
@@ -131,6 +136,9 @@ class Connection:
             # Incoming state transitions are handled here.
             if query.state == ExecutionState.SUCCEEDED:
                 self.__request_results(execution_id)
+            elif query.state == ExecutionState.CANCELLED:
+                logging.info("Query %s has been cancelled.", execution_id)
+                self.__queries.pop(execution_id)
             elif query.state == ExecutionState.FAILED:
                 # Don't do anything here; the ERROR event is coming with more
                 # details.
@@ -230,7 +238,20 @@ class Connection:
         self.__send(request)
 
     def __cancel_query(self, execution_id: str) -> None:
-        query = self.__queries.pop(execution_id)
-        if query:
-            logging.info("Cancelled query %s.", execution_id)
-            # TODO: when protocol supports it, send cancellation request.
+        """Cancels the query with the given execution ID."""
+        if self.__protocol < MIN_VERSION_FOR_CANCEL:
+            logging.warn(
+                "Cancelling queries is only supported with protocol version %s or higher",
+                MIN_VERSION_FOR_CANCEL)
+            return
+
+        query = self.__queries.get(execution_id)
+        if not query:
+            return
+
+        request = {
+            "kind": RequestKind.CANCEL.value,
+            "execution_id": execution_id,
+        }
+        logging.info("Cancelling query %s...", execution_id)
+        self.__send(request)

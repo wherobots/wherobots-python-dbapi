@@ -89,7 +89,7 @@ class Cursor:
 
     def fetchone(self):
         results = self.__get_results()[self.__current_row :]
-        if not results:
+        if len(results) == 0:
             return None
         self.__current_row += 1
         return results[0]
@@ -105,7 +105,8 @@ class Cursor:
 
     def close(self):
         """Close the cursor."""
-        pass
+        if self.__results is None and self.__current_execution_id:
+            self.__cancel_fn(self.__current_execution_id)
 
     def __iter__(self):
         return self
