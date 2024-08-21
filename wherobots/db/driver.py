@@ -4,15 +4,16 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
 import logging
-import os
-import urllib.parse
+from packaging.version import Version
 import queue
+import urllib.parse
+from typing import Union
+
 import requests
 import tenacity
-import threading
-from typing import Union
 import websockets.sync.client
 
+from .connection import Connection
 from .constants import (
     DEFAULT_ENDPOINT,
     DEFAULT_REGION,
@@ -32,7 +33,6 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
-from .connection import Connection
 
 apilevel = "2.0"
 threadsafety = 1
@@ -146,6 +146,7 @@ def http_to_ws(uri: str) -> str:
 
 def connect_direct(
     uri: str,
+    protocol: Version = PROTOCOL_VERSION,
     headers: dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     results_format: Union[ResultsFormat, None] = None,
@@ -153,7 +154,7 @@ def connect_direct(
     geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     q = queue.SimpleQueue()
-    uri_with_protocol = f"{uri}/{PROTOCOL_VERSION}"
+    uri_with_protocol = f"{uri}/{protocol}"
 
     try:
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
@@ -167,6 +168,7 @@ def connect_direct(
 
     return Connection(
         ws,
+        protocol=protocol,
         read_timeout=read_timeout,
         results_format=results_format,
         data_compression=data_compression,

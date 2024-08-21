@@ -20,6 +20,7 @@ pyarrow = "^17.0.0"
 cbor2 = "^5.6.3"
 pandas = "^2.2.2"
 StrEnum = "^0.4.15"
+packaging = "^24.1"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.8.0"

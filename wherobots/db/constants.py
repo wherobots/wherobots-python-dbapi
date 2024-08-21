@@ -1,4 +1,5 @@
 from enum import auto
+from packaging.version import Version
 from strenum import LowercaseStrEnum, StrEnum
 
 from .region import Region
@@ -12,7 +13,8 @@ DEFAULT_REGION: Region = Region.AWS_US_WEST_2
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
-PROTOCOL_VERSION: str = "1.0.0"
+PROTOCOL_VERSION: Version = Version("1.0.0")
+MIN_VERSION_FOR_CANCEL: Version = Version("1.1.0")
 
 
 class ExecutionState(LowercaseStrEnum):
@@ -28,6 +30,9 @@ class ExecutionState(LowercaseStrEnum):
     SUCCEEDED = auto()
     "The SQL session has reported the query has completed successfully."
 
+    CANCELLED = auto()
+    "The SQL session has reported the query has been cancelled."
+
     FAILED = auto()
     "The SQL session has reported the query has failed."
 
@@ -38,12 +43,17 @@ class ExecutionState(LowercaseStrEnum):
     "The driver has completed processing the query results."
 
     def is_terminal_state(self):
-        return self in (ExecutionState.COMPLETED, ExecutionState.FAILED)
+        return self in (
+            ExecutionState.COMPLETED,
+            ExecutionState.CANCELLED,
+            ExecutionState.FAILED,
+        )
 
 
 class RequestKind(LowercaseStrEnum):
     EXECUTE_SQL = auto()
     RETRIEVE_RESULTS = auto()
+    CANCEL = auto()
 
 
 class EventKind(LowercaseStrEnum):
