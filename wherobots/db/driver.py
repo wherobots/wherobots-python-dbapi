@@ -172,32 +172,18 @@ def connect_direct(
     q = queue.SimpleQueue()
     uri_with_protocol = f"{uri}/{PROTOCOL_VERSION}"
 
-    def create_ws_connection():
-        try:
-            logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-            ws = websockets.sync.client.connect(
-                uri=uri_with_protocol,
-                additional_headers=headers,
-                max_size=MAX_MESSAGE_SIZE,
-            )
-            q.put(ws)
-        except Exception as e:
-            q.put(e)
-
-    dt = threading.Thread(
-        name="wherobots-ws-connector",
-        target=create_ws_connection,
-        daemon=True,
-    )
-    dt.start()
-    dt.join()
-
-    result = q.get()
-    if isinstance(result, Exception):
-        raise InterfaceError("Failed to connect to SQL session!") from result
+    try:
+        logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
+        ws = websockets.sync.client.connect(
+            uri=uri_with_protocol,
+            additional_headers=headers,
+            max_size=MAX_MESSAGE_SIZE,
+        )
+    except Exception as e:
+        raise InterfaceError("Failed to connect to SQL session!") from e
 
     return Connection(
-        result,
+        ws,
         read_timeout=read_timeout,
         results_format=results_format,
         data_compression=data_compression,
