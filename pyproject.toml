@@ -16,10 +16,12 @@ python = "^3.9"
 requests = "^2.31.0"
 websockets = "^12.0"
 tenacity = "^8.2.3"
-pyarrow = "^15.0.2"
+pyarrow = "^14.0.2"
 cbor2 = "^5.6.3"
 pandas = "^2.1.0"
 StrEnum = "^0.4.15"
+# pyarrow 14.0.2 doesn't limit numpy < 2, but it should, we do it here
+numpy = "<2"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.8.0"
