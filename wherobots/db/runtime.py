@@ -2,12 +2,12 @@ from enum import Enum
 
 
 class Runtime(Enum):
-    SEDONA = "TINY"
-    SAN_FRANCISCO = "SMALL"
-    NEW_YORK = "MEDIUM"
-    CAIRO = "LARGE"
-    DELHI = "XLARGE"
-    TOKYO = "XXLARGE"
+    SEDONA = "tiny"
+    SAN_FRANCISCO = "small"
+    NEW_YORK = "medium"
+    CAIRO = "large"
+    DELHI = "x-large"
+    TOKYO = "2x-large"
     ATLANTIS = "4x-large"
 
     NEW_YORK_HIMEM = "medium-himem"
