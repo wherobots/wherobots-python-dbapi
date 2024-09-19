@@ -4,9 +4,12 @@ A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
 import logging
-import os
+import platform
 import urllib.parse
 import queue
+from importlib import metadata
+from importlib.metadata import PackageNotFoundError
+
 import requests
 import tenacity
 import threading
@@ -39,6 +42,18 @@ threadsafety = 1
 paramstyle = "pyformat"
 
 
+def gen_user_agent_header():
+    try:
+        package_version = metadata.version("wherobots-python-dbapi")
+    except PackageNotFoundError:
+        package_version = "unknown"
+    python_version = platform.python_version()
+    system = platform.system().lower()
+    return {
+        "User-Agent": f"wherobots-python-dbapi/{package_version} os/{system} python/{python_version}"
+    }
+
+
 def connect(
     host: str = DEFAULT_ENDPOINT,
     token: str = None,
@@ -57,11 +72,13 @@ def connect(
     if token and api_key:
         raise ValueError("`token` and `api_key` can't be both provided")
 
-    headers = {}
+    headers = gen_user_agent_header()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     elif api_key:
         headers["X-API-Key"] = api_key
+
+    logging.info(headers)
 
     host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
