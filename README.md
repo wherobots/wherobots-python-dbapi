@@ -33,7 +33,7 @@ from wherobots.db.runtime import Runtime
 
 with connect(
         api_key='...',
-        runtime=Runtime.SEDONA,
+        runtime=Runtime.TINY,
         region=Region.AWS_US_WEST_2) as conn:
     curr = conn.cursor()
     curr.execute("SHOW SCHEMAS IN wherobots_open_data")

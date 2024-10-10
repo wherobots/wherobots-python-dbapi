@@ -71,8 +71,6 @@ if __name__ == "__main__":
             host=args.api_endpoint,
             token=token,
             api_key=api_key,
-            runtime=Runtime.SEDONA,
-            region=Region.AWS_US_WEST_2,
             shutdown_after_inactive_seconds=args.shutdown_after_inactive_seconds,
             wait_timeout=900,
         )
