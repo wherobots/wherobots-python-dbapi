@@ -19,6 +19,7 @@ import websockets.sync.client
 from .constants import (
     DEFAULT_ENDPOINT,
     DEFAULT_REGION,
+    DEFAULT_REUSE_SESSION,
     DEFAULT_RUNTIME,
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
@@ -62,6 +63,7 @@ def connect(
     region: Region = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
+    reuse_session: bool = DEFAULT_REUSE_SESSION,
     shutdown_after_inactive_seconds: Union[int, None] = None,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
@@ -83,8 +85,8 @@ def connect(
     region = region or DEFAULT_REGION
 
     logging.info(
-        "Requesting %s/%s runtime in %s from %s ...",
-        runtime.name,
+        "%s %s runtime in %s from %s ...",
+        "Recycling" if reuse_session else "Requesting",
         runtime.value,
         region.value,
         host,
@@ -97,7 +99,7 @@ def connect(
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
-            params={"region": region.value},
+            params={"region": region.value, "reuse_session": reuse_session},
             json={
                 "runtimeId": runtime.value,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,

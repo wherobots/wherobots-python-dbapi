@@ -7,10 +7,13 @@ from .runtime import Runtime
 
 DEFAULT_ENDPOINT: str = "api.cloud.wherobots.com"  # "api.cloud.wherobots.com"
 STAGING_ENDPOINT: str = "api.staging.wherobots.com"  # "api.staging.wherobots.com"
+
 DEFAULT_RUNTIME: Runtime = Runtime.TINY
 DEFAULT_REGION: Region = Region.AWS_US_WEST_2
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
+DEFAULT_REUSE_SESSION: bool = True
+
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: str = "1.0.0"
 
