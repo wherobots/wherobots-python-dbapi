@@ -33,7 +33,7 @@ from wherobots.db.runtime import Runtime
 
 with connect(
         api_key='...',
-        runtime=Runtime.SEDONA,
+        runtime=Runtime.TINY,
         region=Region.AWS_US_WEST_2) as conn:
     curr = conn.cursor()
     curr.execute("SHOW SCHEMAS IN wherobots_open_data")
@@ -81,3 +81,6 @@ users may find useful:
     client application. The default is EWKT (string) and the most
     convenient for human inspection while still being usable by
     libraries like Shapely.
+* `reuse_session`: controls whether an existing runtime of the same type
+    and in the same region that is available should be re-used for this
+    connection. This is the default behavior.
