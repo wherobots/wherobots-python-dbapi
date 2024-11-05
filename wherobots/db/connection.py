@@ -131,6 +131,9 @@ class Connection:
             # Incoming state transitions are handled here.
             if query.state == ExecutionState.SUCCEEDED:
                 self.__request_results(execution_id)
+            elif query.state == ExecutionState.CANCELLED:
+                logging.info("Query %s has been cancelled.", execution_id)
+                self.__queries.pop(execution_id)
             elif query.state == ExecutionState.FAILED:
                 # Don't do anything here; the ERROR event is coming with more
                 # details.
@@ -230,7 +233,14 @@ class Connection:
         self.__send(request)
 
     def __cancel_query(self, execution_id: str) -> None:
-        query = self.__queries.pop(execution_id)
-        if query:
-            logging.info("Cancelled query %s.", execution_id)
-            # TODO: when protocol supports it, send cancellation request.
+        """Cancels the query with the given execution ID."""
+        query = self.__queries.get(execution_id)
+        if not query:
+            return
+
+        request = {
+            "kind": RequestKind.CANCEL.value,
+            "execution_id": execution_id,
+        }
+        logging.info("Cancelling query %s...", execution_id)
+        self.__send(request)

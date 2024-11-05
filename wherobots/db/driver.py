@@ -3,19 +3,19 @@
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
 
-import logging
-import platform
-import urllib.parse
-import queue
 from importlib import metadata
 from importlib.metadata import PackageNotFoundError
-
+import logging
+from packaging.version import Version
+import platform
+import queue
 import requests
 import tenacity
-import threading
 from typing import Union
+import urllib.parse
 import websockets.sync.client
 
+from .connection import Connection
 from .constants import (
     DEFAULT_ENDPOINT,
     DEFAULT_REGION,
@@ -36,7 +36,6 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
-from .connection import Connection
 
 apilevel = "2.0"
 threadsafety = 1
@@ -163,6 +162,7 @@ def http_to_ws(uri: str) -> str:
 
 def connect_direct(
     uri: str,
+    protocol: Version = PROTOCOL_VERSION,
     headers: dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     results_format: Union[ResultsFormat, None] = None,
@@ -170,34 +170,20 @@ def connect_direct(
     geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     q = queue.SimpleQueue()
-    uri_with_protocol = f"{uri}/{PROTOCOL_VERSION}"
+    uri_with_protocol = f"{uri}/{protocol}"
 
-    def create_ws_connection():
-        try:
-            logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-            ws = websockets.sync.client.connect(
-                uri=uri_with_protocol,
-                additional_headers=headers,
-                max_size=MAX_MESSAGE_SIZE,
-            )
-            q.put(ws)
-        except Exception as e:
-            q.put(e)
-
-    dt = threading.Thread(
-        name="wherobots-ws-connector",
-        target=create_ws_connection,
-        daemon=True,
-    )
-    dt.start()
-    dt.join()
-
-    result = q.get()
-    if isinstance(result, Exception):
-        raise InterfaceError("Failed to connect to SQL session!") from result
+    try:
+        logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
+        ws = websockets.sync.client.connect(
+            uri=uri_with_protocol,
+            additional_headers=headers,
+            max_size=MAX_MESSAGE_SIZE,
+        )
+    except Exception as e:
+        raise InterfaceError("Failed to connect to SQL session!") from e
 
     return Connection(
-        result,
+        ws,
         read_timeout=read_timeout,
         results_format=results_format,
         data_compression=data_compression,
