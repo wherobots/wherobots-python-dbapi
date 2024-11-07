@@ -74,19 +74,19 @@ class Connection:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def close(self):
+    def close(self) -> None:
         self.__ws.close()
 
-    def commit(self):
+    def commit(self) -> None:
         raise NotSupportedError
 
-    def rollback(self):
+    def rollback(self) -> None:
         raise NotSupportedError
 
     def cursor(self) -> Cursor:
         return Cursor(self.__execute_sql, self.__cancel_query)
 
-    def __main_loop(self):
+    def __main_loop(self) -> None:
         """Main background loop listening for messages from the SQL session."""
         logging.info("Starting background connection handling loop...")
         while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
@@ -101,7 +101,7 @@ class Connection:
             except Exception as e:
                 logging.exception("Error handling message from SQL session", exc_info=e)
 
-    def __listen(self):
+    def __listen(self) -> None:
         """Waits for the next message from the SQL session and processes it.
 
         The code in this method is purposefully defensive to avoid unexpected situations killing the thread.

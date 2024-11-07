@@ -44,7 +44,7 @@ class ExecutionState(LowercaseStrEnum):
     COMPLETED = auto()
     "The driver has completed processing the query results."
 
-    def is_terminal_state(self):
+    def is_terminal_state(self) -> bool:
         return self in (
             ExecutionState.COMPLETED,
             ExecutionState.CANCELLED,
@@ -97,7 +97,7 @@ class AppStatus(StrEnum):
     DESTROY_FAILED = auto()
     DESTROYED = auto()
 
-    def is_starting(self):
+    def is_starting(self) -> bool:
         return self in (
             AppStatus.PENDING,
             AppStatus.PREPARING,
@@ -107,7 +107,7 @@ class AppStatus(StrEnum):
             AppStatus.INITIALIZING,
         )
 
-    def is_terminal_state(self):
+    def is_terminal_state(self) -> bool:
         return self in (
             AppStatus.PREPARE_FAILED,
             AppStatus.DEPLOY_FAILED,
