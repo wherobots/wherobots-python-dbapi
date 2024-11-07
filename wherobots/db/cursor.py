@@ -1,7 +1,7 @@
 import queue
 from typing import Any, Optional, List, Tuple
 
-from .errors import ProgrammingError, DatabaseError
+from .errors import DatabaseError, ProgrammingError
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -110,13 +110,13 @@ class Cursor:
         if self.__results is None and self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
-    def __iter__(self) -> Cursor:
+    def __iter__(self):
         return self
 
     def __next__(self) -> None:
         raise StopIteration
 
-    def __enter__(self) -> Cursor:
+    def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

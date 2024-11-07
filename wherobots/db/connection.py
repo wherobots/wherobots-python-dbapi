@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Union
 
 import cbor2
+import pandas
 import pyarrow
 import websockets.exceptions
 import websockets.protocol
@@ -120,7 +121,8 @@ class Connection:
             )
             return
 
-        if kind == EventKind.STATE_UPDATED:
+        # Incoming state transitions are handled here.
+        if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
             try:
                 query.state = ExecutionState[message["state"].upper()]
                 logging.info("Query %s is now %s.", execution_id, query.state)
@@ -128,52 +130,60 @@ class Connection:
                 logging.warning("Invalid state update message for %s", execution_id)
                 return
 
-            # Incoming state transitions are handled here.
             if query.state == ExecutionState.SUCCEEDED:
-                self.__request_results(execution_id)
+                # On a state_updated event telling us the query succeeded,
+                # ask for results.
+                if kind == EventKind.STATE_UPDATED:
+                    self.__request_results(execution_id)
+                    return
+
+                # Otherwise, process the results from the execution_result event.
+                results = message.get("results")
+                if not results or not isinstance(results, dict):
+                    logging.warning("Got no results back from %s.", execution_id)
+                    return
+
+                query.state = ExecutionState.COMPLETED
+                query.handler(self._handle_results(execution_id, results))
             elif query.state == ExecutionState.CANCELLED:
-                logging.info("Query %s has been cancelled.", execution_id)
+                logging.info(
+                    "Query %s has been cancelled; returning empty results.",
+                    execution_id,
+                )
+                query.handler(pandas.DataFrame())
                 self.__queries.pop(execution_id)
             elif query.state == ExecutionState.FAILED:
                 # Don't do anything here; the ERROR event is coming with more
                 # details.
                 pass
-
-        elif kind == EventKind.EXECUTION_RESULT:
-            results = message.get("results")
-            if not results or not isinstance(results, dict):
-                logging.warning("Got no results back from %s.", execution_id)
-                return
-
-            result_bytes = results.get("result_bytes")
-            result_format = results.get("format")
-            result_compression = results.get("compression")
-            logging.info(
-                "Received %d bytes of %s-compressed %s results from %s.",
-                len(result_bytes),
-                result_compression,
-                result_format,
-                execution_id,
-            )
-
-            query.state = ExecutionState.COMPLETED
-            if result_format == ResultsFormat.JSON:
-                query.handler(json.loads(result_bytes.decode("utf-8")))
-            elif result_format == ResultsFormat.ARROW:
-                buffer = pyarrow.py_buffer(result_bytes)
-                stream = pyarrow.input_stream(buffer, result_compression)
-                with pyarrow.ipc.open_stream(stream) as reader:
-                    query.handler(reader.read_pandas())
-            else:
-                query.handler(
-                    OperationalError(f"Unsupported results format {result_format}")
-                )
         elif kind == EventKind.ERROR:
             query.state = ExecutionState.FAILED
             error = message.get("message")
             query.handler(OperationalError(error))
         else:
             logging.warning("Received unknown %s event!", kind)
+
+    def _handle_results(self, execution_id: str, results: dict[str, Any]) -> Any:
+        result_bytes = results.get("result_bytes")
+        result_format = results.get("format")
+        result_compression = results.get("compression")
+        logging.info(
+            "Received %d bytes of %s-compressed %s results from %s.",
+            len(result_bytes),
+            result_compression,
+            result_format,
+            execution_id,
+        )
+
+        if result_format == ResultsFormat.JSON:
+            return json.loads(result_bytes.decode("utf-8"))
+        elif result_format == ResultsFormat.ARROW:
+            buffer = pyarrow.py_buffer(result_bytes)
+            stream = pyarrow.input_stream(buffer, result_compression)
+            with pyarrow.ipc.open_stream(stream) as reader:
+                return reader.read_pandas()
+        else:
+            return OperationalError(f"Unsupported results format {result_format}")
 
     def __send(self, message: dict[str, Any]) -> None:
         request = json.dumps(message)
