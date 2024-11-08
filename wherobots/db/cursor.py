@@ -1,7 +1,7 @@
 import queue
 from typing import Any, Optional, List, Tuple
 
-from .errors import ProgrammingError, DatabaseError
+from .errors import DatabaseError, ProgrammingError
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -16,7 +16,7 @@ _TYPE_MAP = {
 
 class Cursor:
 
-    def __init__(self, exec_fn, cancel_fn):
+    def __init__(self, exec_fn, cancel_fn) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
 
@@ -72,7 +72,7 @@ class Cursor:
 
         return self.__results
 
-    def execute(self, operation: str, parameters: dict[str, Any] = None):
+    def execute(self, operation: str, parameters: dict[str, Any] = None) -> None:
         if self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
@@ -84,26 +84,28 @@ class Cursor:
         sql = operation.format(**(parameters or {}))
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
-    def executemany(self, operation: str, seq_of_parameters: list[dict[str, Any]]):
+    def executemany(
+        self, operation: str, seq_of_parameters: list[dict[str, Any]]
+    ) -> None:
         raise NotImplementedError
 
-    def fetchone(self):
+    def fetchone(self) -> Any:
         results = self.__get_results()[self.__current_row :]
         if len(results) == 0:
             return None
         self.__current_row += 1
         return results[0]
 
-    def fetchmany(self, size: int = None):
+    def fetchmany(self, size: int = None) -> list[Any]:
         size = size or self.arraysize
         results = self.__get_results()[self.__current_row : self.__current_row + size]
         self.__current_row += size
         return results
 
-    def fetchall(self):
+    def fetchall(self) -> list[Any]:
         return self.__get_results()[self.__current_row :]
 
-    def close(self):
+    def close(self) -> None:
         """Close the cursor."""
         if self.__results is None and self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
@@ -111,11 +113,11 @@ class Cursor:
     def __iter__(self):
         return self
 
-    def __next__(self):
+    def __next__(self) -> None:
         raise StopIteration
 
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
