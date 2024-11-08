@@ -1,6 +1,7 @@
 # A simple smoke test for the DB driver.
 
 import argparse
+import concurrent.futures
 import functools
 import logging
 import sys
@@ -11,6 +12,7 @@ from rich.table import Table
 
 from wherobots.db import connect, connect_direct
 from wherobots.db.constants import DEFAULT_ENDPOINT
+from wherobots.db.connection import Connection
 from wherobots.db.region import Region
 from wherobots.db.runtime import Runtime
 
@@ -85,8 +87,13 @@ if __name__ == "__main__":
             table.add_row(*r)
         Console().print(table)
 
+    def execute(conn: Connection, sql: str) -> pandas.DataFrame:
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+            return cursor.fetchall()
+
     with conn_func() as conn:
-        for sql in args.sql:
-            with conn.cursor() as cursor:
-                cursor.execute(sql)
-                render(cursor.fetchall())
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            futures = [pool.submit(execute, conn, s) for s in args.sql]
+            for future in concurrent.futures.as_completed(futures):
+                render(future.result())
