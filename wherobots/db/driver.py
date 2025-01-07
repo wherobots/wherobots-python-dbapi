@@ -164,7 +164,7 @@ def http_to_ws(uri: str) -> str:
 def connect_direct(
     uri: str,
     protocol: Version = PROTOCOL_VERSION,
-    headers: dict[str, str] = None,
+    headers: Dict[str, str] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
