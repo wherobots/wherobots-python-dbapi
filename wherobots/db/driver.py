@@ -2,7 +2,7 @@
 
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
-
+import ssl
 from importlib import metadata
 from importlib.metadata import PackageNotFoundError
 import logging
@@ -11,9 +11,10 @@ import platform
 import queue
 import requests
 import tenacity
-from typing import Union
+from typing import Union, Dict
 import urllib.parse
 import websockets.sync.client
+import certifi
 
 from .connection import Connection
 from .constants import (
@@ -174,10 +175,13 @@ def connect_direct(
 
     try:
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
+        ssl_context = ssl.create_default_context()
+        ssl_context.load_verify_locations(certifi.where())
         ws = websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
+            ssl=ssl_context,
         )
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e

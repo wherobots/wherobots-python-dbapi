@@ -4,7 +4,7 @@ import textwrap
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, Dict
 
 import cbor2
 import pandas
@@ -163,7 +163,7 @@ class Connection:
         else:
             logging.warning("Received unknown %s event!", kind)
 
-    def _handle_results(self, execution_id: str, results: dict[str, Any]) -> Any:
+    def _handle_results(self, execution_id: str, results: Dict[str, Any]) -> Any:
         result_bytes = results.get("result_bytes")
         result_format = results.get("format")
         result_compression = results.get("compression")
@@ -185,12 +185,12 @@ class Connection:
         else:
             return OperationalError(f"Unsupported results format {result_format}")
 
-    def __send(self, message: dict[str, Any]) -> None:
+    def __send(self, message: Dict[str, Any]) -> None:
         request = json.dumps(message)
         logging.debug("Request: %s", request)
         self.__ws.send(request)
 
-    def __recv(self) -> dict[str, Any]:
+    def __recv(self) -> Dict[str, Any]:
         frame = self.__ws.recv(timeout=self.__read_timeout)
         if isinstance(frame, str):
             message = json.loads(frame)
