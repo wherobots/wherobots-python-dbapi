@@ -1,5 +1,5 @@
 import queue
-from typing import Any, Optional, List, Tuple
+from typing import Any, Optional, List, Tuple, Dict
 
 from .errors import DatabaseError, ProgrammingError
 
@@ -72,7 +72,7 @@ class Cursor:
 
         return self.__results
 
-    def execute(self, operation: str, parameters: dict[str, Any] = None) -> None:
+    def execute(self, operation: str, parameters: Dict[str, Any] = None) -> None:
         if self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
@@ -85,7 +85,7 @@ class Cursor:
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
     def executemany(
-        self, operation: str, seq_of_parameters: list[dict[str, Any]]
+        self, operation: str, seq_of_parameters: List[Dict[str, Any]]
     ) -> None:
         raise NotImplementedError
 
@@ -96,13 +96,13 @@ class Cursor:
         self.__current_row += 1
         return results[0]
 
-    def fetchmany(self, size: int = None) -> list[Any]:
+    def fetchmany(self, size: int = None) -> List[Any]:
         size = size or self.arraysize
         results = self.__get_results()[self.__current_row : self.__current_row + size]
         self.__current_row += size
         return results
 
-    def fetchall(self) -> list[Any]:
+    def fetchall(self) -> List[Any]:
         return self.__get_results()[self.__current_row :]
 
     def close(self) -> None:
