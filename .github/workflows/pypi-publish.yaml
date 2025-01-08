@@ -20,6 +20,8 @@ jobs:
           python-version: 3.8
       - name: Install Poetry
         uses: snok/install-poetry@v1
+        with:
+          version: 1.8.5
       - name: Compare tag and project version
         run: |
           if [ "v$(poetry version | cut -d' ' -f2)" != "${{ github.ref_name }}" ]; then echo "Version mismatch"; exit 1; fi
