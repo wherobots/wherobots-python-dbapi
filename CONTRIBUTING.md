@@ -1,5 +1,18 @@
 # Contributor Guidance
 
+## Development
+
+Note: this project is explicitly meant to support Python versions as old
+as 3.8. This (unfortunately) means it requires Poetry 1.8.x to install
+and build correctly.
+
+```
+$ brew install pipx
+$ pipx ensurepath
+$ pipx install poetry==1.8.5
+$ poetry update
+```
+
 ## Publish package to PyPI
 
 When we are ready to release a new version `vx.y.z`, one of the maintainers should:

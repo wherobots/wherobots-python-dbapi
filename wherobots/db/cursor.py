@@ -81,7 +81,9 @@ class Cursor:
         self.__rowcount = -1
         self.__description = None
 
-        sql = operation.format(**(parameters or {}))
+        sql = (
+            operation.replace("{", "{{").replace("}", "}}").format(**(parameters or {}))
+        )
         self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
 
     def executemany(
