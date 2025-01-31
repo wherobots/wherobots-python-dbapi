@@ -27,10 +27,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: Install
+      - name: Check install local
         run: |
           pip install ".[test]"
+          python -c "import wherobots.db"
 
-      - name: Check Import
+      - name: Check build
         run: |
+          pip install poetry
+          poetry build
+
+      - name: Check install sdist
+        run: |
+          pip install --force-reinstall dist/*.tar.gz
+          python -c "import wherobots.db"
+
+      - name: Check install wheel
+        run: |
+          pip install --force-reinstall dist/*.whl
           python -c "import wherobots.db"
