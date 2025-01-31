@@ -1,3 +1,6 @@
+[project]
+name = "wherobots-python-dbapi"
+
 [tool.poetry]
 name = "wherobots-python-dbapi"
 version = "0.11.0"
@@ -13,27 +16,28 @@ Tracker = "https://github.com/wherobots/wherobots-python-dbapi-driver/issues"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-requests = "^2.31.0"
-websockets = "13.0"
-tenacity = "^8.2.3"
-pyarrow = "^14.0.2"
-cbor2 = "^5.6.3"
-pandas = "^2.0"
+packaging = "*"
+requests = ">=2.31.0"
+websockets = ">=13.0"
+tenacity = ">=8.2.3"
+cbor2 = ">=5.6.3"
 StrEnum = "^0.4.15"
-# pyarrow 14.0.2 doesn't limit numpy < 2, but it should, we do it here
-numpy = "<2"
+pyarrow = { version = ">=14.0.2" }
+pandas = { version = "*" }
+pytest = { version = ">=8.0.2", optional = true }
+
+[tool.poetry.extras]
+test = [ "pytest" ]
 
 [tool.poetry.group.dev.dependencies]
-mypy = "^1.8.0"
-pytest = "^8.0.2"
-black = "^24.2.0"
-pre-commit = ">=3.5, <3.8.0"
-conventional-pre-commit = "^3.1.0"
-types-requests = "^2.32.0.20241016"
-rich = "^13.7.1"
+pre-commit = "*"
+pytest = ">=8.0.2"
+pyarrow = ">=14.0.2"
+pandas = "*"
+rich = ">=13.7.1"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.9.1"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pylint.format]

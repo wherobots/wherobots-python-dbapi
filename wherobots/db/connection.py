@@ -6,9 +6,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Union, Dict
 
-import cbor2
 import pandas
 import pyarrow
+import cbor2
 import websockets.exceptions
 import websockets.protocol
 import websockets.sync.client
