@@ -1,12 +1,13 @@
 [project]
 name = "wherobots-python-dbapi"
-version = "0.11.0"
-description = "Python DB-API driver for Wherobots DB"
-authors = [{name = "Maxime Petazzoni", email = "max@wherobots.com"}]
-license = "Apache 2.0"
-readme = "README.md"
 
 [tool.poetry]
+name = "wherobots-python-dbapi"
+version = "0.11.0"
+description = "Python DB-API driver for Wherobots DB"
+authors = ["Maxime Petazzoni <max@wherobots.com>"]
+license = "Apache 2.0"
+readme = "README.md"
 packages = [{ include = "db", from = "wherobots" }]
 
 [project.urls]
