@@ -82,5 +82,5 @@ users may find useful:
     convenient for human inspection while still being usable by
     libraries like Shapely.
 * `reuse_session`: controls whether an existing runtime of the same type
-    and in the same region that is available should be re-used for this
+    and in the same region that is available should be reused for this
     connection. This is the default behavior.

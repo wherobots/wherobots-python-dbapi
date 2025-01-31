@@ -1,19 +1,25 @@
 fail_fast: true
 
 repos:
-  - repo: https://github.com/ambv/black
-    rev: 24.2.0
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-      - id: black
-        args: [--diff, --check]
+    - id: check-yaml
+    - id: end-of-file-fixer
+    - id: trailing-whitespace
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.5
     hooks:
-      - id: mypy
-        exclude: ^tests/
-        verbose: true
-        entry: bash -c '"$@" || true' --
+      - id: ruff
+        args: [ --fix ]
+      - id: ruff-format
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+    -   id: codespell
+        additional_dependencies: [tomli]
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.1.0

@@ -15,7 +15,6 @@ _TYPE_MAP = {
 
 
 class Cursor:
-
     def __init__(self, exec_fn, cancel_fn) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
