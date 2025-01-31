@@ -13,8 +13,6 @@ from rich.table import Table
 from wherobots.db import connect, connect_direct
 from wherobots.db.constants import DEFAULT_ENDPOINT
 from wherobots.db.connection import Connection
-from wherobots.db.region import Region
-from wherobots.db.runtime import Runtime
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
