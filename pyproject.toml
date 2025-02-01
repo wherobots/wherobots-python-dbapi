@@ -8,7 +8,7 @@ description = "Python DB-API driver for Wherobots DB"
 authors = ["Maxime Petazzoni <max@wherobots.com>"]
 license = "Apache 2.0"
 readme = "README.md"
-packages = [{ include = "db", from = "wherobots" }]
+packages = [{ include = "wherobots" }]
 
 [project.urls]
 Homepage = "https://github.com/wherobots/wherobots-python-dbapi-driver"

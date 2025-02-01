@@ -30,6 +30,7 @@ jobs:
       - name: Check install local
         run: |
           pip install ".[test]"
+          cd tests
           python -c "import wherobots.db"
 
       - name: Check build
@@ -40,9 +41,11 @@ jobs:
       - name: Check install sdist
         run: |
           pip install --force-reinstall dist/*.tar.gz
+          cd tests
           python -c "import wherobots.db"
 
       - name: Check install wheel
         run: |
           pip install --force-reinstall dist/*.whl
+          cd tests
           python -c "import wherobots.db"
