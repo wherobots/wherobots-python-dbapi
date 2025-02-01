@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Callable, Union, Dict
 
 import cbor2
-import pandas
-import pyarrow
 import websockets.exceptions
 import websockets.protocol
 import websockets.sync.client
@@ -146,6 +144,8 @@ class Connection:
                 query.state = ExecutionState.COMPLETED
                 query.handler(self._handle_results(execution_id, results))
             elif query.state == ExecutionState.CANCELLED:
+                import pandas
+
                 logging.info(
                     "Query %s has been cancelled; returning empty results.",
                     execution_id,
@@ -178,6 +178,8 @@ class Connection:
         if result_format == ResultsFormat.JSON:
             return json.loads(result_bytes.decode("utf-8"))
         elif result_format == ResultsFormat.ARROW:
+            import pyarrow
+
             buffer = pyarrow.py_buffer(result_bytes)
             stream = pyarrow.input_stream(buffer, result_compression)
             with pyarrow.ipc.open_stream(stream) as reader:

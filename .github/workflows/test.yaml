@@ -1,0 +1,51 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Check install local
+        run: |
+          pip install ".[test]"
+          cd tests
+          python -c "import wherobots.db"
+
+      - name: Check build
+        run: |
+          pip install poetry
+          poetry build
+
+      - name: Check install sdist
+        run: |
+          pip install --force-reinstall dist/*.tar.gz
+          cd tests
+          python -c "import wherobots.db"
+
+      - name: Check install wheel
+        run: |
+          pip install --force-reinstall dist/*.whl
+          cd tests
+          python -c "import wherobots.db"
