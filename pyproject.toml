@@ -20,19 +20,11 @@ packaging = "*"
 requests = ">=2.31.0"
 websockets = ">=13.0"
 tenacity = ">=8.2.3"
-pyarrow = ">=14.0.2"
 cbor2 = ">=5.6.3"
-pandas = "*"
 StrEnum = "^0.4.15"
-
-[tool.poetry.group.pandas.dependencies]
-pyarrow = ">=14.0.2"
-pandas = "*"
-
-[tool.poetry.group.test.dependencies]
-pytest = ">=8.0.2"
-pyarrow = ">=14.0.2"
-pandas = "*"
+pyarrow = { version = ">=14.0.2", extras = ["test", "pandas"] }
+pandas = { version = "*", extras = ["test", "pandas"] }
+pytest = { version = ">=8.0.2", extras = ["test"] }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "*"
