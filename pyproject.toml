@@ -22,9 +22,13 @@ websockets = ">=13.0"
 tenacity = ">=8.2.3"
 cbor2 = ">=5.6.3"
 StrEnum = "^0.4.15"
-pyarrow = { version = ">=14.0.2", extras = ["test", "pandas"] }
-pandas = { version = "*", extras = ["test", "pandas"] }
-pytest = { version = ">=8.0.2", extras = ["test"] }
+pyarrow = { version = ">=14.0.2", optional = true }
+pandas = { version = "*", optional = true }
+pytest = { version = ">=8.0.2", optional = true }
+
+[tool.poetry.extras]
+test = [ "pytest", "pandas", "pyarrow" ]
+pandas = [ "pandas", "pyarrow" ]
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "*"
