@@ -8,7 +8,6 @@ from importlib.metadata import PackageNotFoundError
 import logging
 from packaging.version import Version
 import platform
-import queue
 import requests
 import tenacity
 from typing import Union, Dict
@@ -170,7 +169,6 @@ def connect_direct(
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
-    q = queue.SimpleQueue()
     uri_with_protocol = f"{uri}/{protocol}"
 
     try:
