@@ -2,6 +2,7 @@
 
 A PEP-0249 compatible driver for interfacing with Wherobots DB.
 """
+
 import ssl
 from importlib import metadata
 from importlib.metadata import PackageNotFoundError
@@ -19,9 +20,9 @@ from .connection import Connection
 from .constants import (
     DEFAULT_ENDPOINT,
     DEFAULT_REGION,
-    DEFAULT_REUSE_SESSION,
     DEFAULT_RUNTIME,
     DEFAULT_READ_TIMEOUT_SECONDS,
+    DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     MAX_MESSAGE_SIZE,
     PROTOCOL_VERSION,
@@ -29,6 +30,7 @@ from .constants import (
     DataCompression,
     GeometryRepresentation,
     ResultsFormat,
+    SessionType,
 )
 from .errors import (
     InterfaceError,
@@ -62,7 +64,7 @@ def connect(
     region: Region = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
-    reuse_session: bool = DEFAULT_REUSE_SESSION,
+    session_type: Union[SessionType, None] = None,
     shutdown_after_inactive_seconds: Union[int, None] = None,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
@@ -82,10 +84,10 @@ def connect(
     host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
     region = region or DEFAULT_REGION
+    session_type = session_type or DEFAULT_SESSION_TYPE
 
     logging.info(
-        "%s %s runtime in %s from %s ...",
-        "Recycling" if reuse_session else "Requesting",
+        "Requesting %s runtime in %s from %s ...",
         runtime.value,
         region.value,
         host,
@@ -98,7 +100,7 @@ def connect(
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
-            params={"region": region.value, "reuse_session": reuse_session},
+            params={"region": region.value, "sessionType": session_type.value},
             json={
                 "runtimeId": runtime.value,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
