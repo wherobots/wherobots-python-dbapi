@@ -3,7 +3,7 @@ name = "wherobots-python-dbapi"
 
 [tool.poetry]
 name = "wherobots-python-dbapi"
-version = "0.11.0"
+version = "0.11.1"
 description = "Python DB-API driver for Wherobots DB"
 authors = ["Maxime Petazzoni <max@wherobots.com>"]
 license = "Apache 2.0"
