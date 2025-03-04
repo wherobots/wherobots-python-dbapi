@@ -13,11 +13,13 @@ from rich.table import Table
 from wherobots.db import connect, connect_direct
 from wherobots.db.constants import DEFAULT_ENDPOINT
 from wherobots.db.connection import Connection
+from wherobots.db.region import Region
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-key-file", help="File containing the API key")
     parser.add_argument("--token-file", help="File containing the token")
+    parser.add_argument("--region", help="Region to connect to (ie. aws-us-west-2)")
     parser.add_argument(
         "--debug",
         help="Enable debug logging",
@@ -73,9 +75,10 @@ if __name__ == "__main__":
             api_key=api_key,
             shutdown_after_inactive_seconds=args.shutdown_after_inactive_seconds,
             wait_timeout=900,
+            region=Region(args.region) if args.region else Region.AWS_US_WEST_2,
         )
 
-    def render(results: pandas.DataFrame):
+    def render(results: pandas.DataFrame) -> None:
         table = Table()
         table.add_column("#")
         for column in results.columns:

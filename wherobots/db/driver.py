@@ -56,10 +56,10 @@ def gen_user_agent_header():
 
 def connect(
     host: str = DEFAULT_ENDPOINT,
-    token: str = None,
-    api_key: str = None,
-    runtime: Runtime = None,
-    region: Region = None,
+    token: Union[str, None] = None,
+    api_key: Union[str, None] = None,
+    runtime: Union[Runtime, None] = None,
+    region: Union[Region, None] = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     reuse_session: bool = DEFAULT_REUSE_SESSION,
@@ -163,7 +163,7 @@ def http_to_ws(uri: str) -> str:
 def connect_direct(
     uri: str,
     protocol: Version = PROTOCOL_VERSION,
-    headers: Dict[str, str] = None,
+    headers: Union[Dict[str, str], None] = None,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
