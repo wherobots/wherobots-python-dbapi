@@ -81,6 +81,12 @@ users may find useful:
     client application. The default is EWKT (string) and the most
     convenient for human inspection while still being usable by
     libraries like Shapely.
-* `reuse_session`: controls whether an existing runtime of the same type
-    and in the same region that is available should be reused for this
-    connection. This is the default behavior.
+* `session_type`: `"single"` or `"multi"`; if set to `"single"`, then each call
+    to `Connection.connect()` establishes an exclusive connection to a
+    Wherobots runtime; if set to "multi", then multiple `Connection.connect()`
+    calls with the same arguments and credentials will connect to the same
+    shared Wherobots runtime; `"single"` is the default.
+
+    Consider multi-session for potential cost savings, but be mindful of
+    performance impacts from shared resources. You might need to adjust
+    cluster size if slowdowns occur, which could affect overall cost.
