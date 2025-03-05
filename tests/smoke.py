@@ -23,8 +23,9 @@ if __name__ == "__main__":
     parser.add_argument("--region", help="Region to connect to (ie. aws-us-west-2)")
     parser.add_argument(
         "--session-type",
-        help="Type of session to create. 'single' or 'multi'",
+        help="Type of session to create",
         default=DEFAULT_SESSION_TYPE,
+        choices=[st.value for st in SessionType],
     )
     parser.add_argument(
         "--debug",

@@ -82,9 +82,9 @@ users may find useful:
     convenient for human inspection while still being usable by
     libraries like Shapely.
 * `session_type`: `"single"` or `"multi"`; if set to `"single"`, then each call
-    to `connect()` establishes an exclusive connection to a Wherobots runtime;
-    if set to "multi", then multiple `connect()` calls with the same arguments
-    and credentials will connect to the sameshared Wherobots runtime;
+    to `connect()` establishes an exclusive connection to a distinct and dedicated
+    Wherobots runtime; if set to "multi", then multiple `connect()` calls with the
+    same arguments and credentials will connect to the same shared Wherobots runtime;
     `"single"` is the default.
 
     Consider multi-session for potential cost savings, but be mindful of
