@@ -79,6 +79,12 @@ into. Wherobots Cloud supports the following compute regions:
 > and customers; other regions are currently reserved to Professional
 > Edition customers.
 
+> [!WARNING]
+> To prepare for the expansion of Wherobots Cloud to new regions and cloud providers, the `region` parameter will become mandatory in a future SDK version.
+> Before this support for new regions is added, we will release an updated version of the SDK.
+> While you can continue using an older SDK version for your development,
+> any new or existing SQL session you initialize without specifying the `region` parameter will be hosted in the `aws-us-west-2` region.
+
 ### Advanced parameters
 
 The `connect()` method takes some additional parameters that advanced
