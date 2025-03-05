@@ -100,10 +100,11 @@ def connect(
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
-            params={"region": region.value, "sessionType": session_type.value},
+            params={"region": region.value},
             json={
                 "runtimeId": runtime.value,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
+                "sessionType": session_type.value,
             },
             headers=headers,
         )
