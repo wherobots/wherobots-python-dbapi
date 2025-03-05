@@ -65,6 +65,12 @@ information on runtime sizing and selection, please consult the
 The only supported Wherobots compute region for now is `aws-us-west-2`,
 in AWS's Oregon (`us-west-2`) region.
 
+> [!WARNING]
+> To prepare for the expansion of Wherobots Cloud to new regions and cloud providers, the `region` parameter will become mandatory in a future SDK version.
+> Before this support for new regions is added, we will release an updated version of the SDK.
+> While you can continue using an older SDK version for your development,
+> any SQL session you initialize without specifying the `region` parameter will be hosted in the `aws-us-west-2` region.
+
 ### Advanced parameters
 
 The `connect()` method takes some additional parameters that advanced
