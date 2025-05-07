@@ -62,8 +62,17 @@ parameter, passing in one of the `Runtime` enum values. For more
 information on runtime sizing and selection, please consult the
 [Wherobots product documentation](https://docs.wherobots.com).
 
-The only supported Wherobots compute region for now is `aws-us-west-2`,
-in AWS's Oregon (`us-west-2`) region.
+You must also specify in which region your SQL session should execute
+into. Wherobots Cloud supports the following compute regions:
+
+* `aws-us-east-1`: AWS US East 1 (N. Virginia)
+* `aws-us-west-2`: AWS US West 2 (Oregon)
+* `aws-eu-west-1`: AWS EU West 1 (Ireland)
+
+> [!IMPORTANT]
+> The `aws-us-west-2` region is available to all Wherobots Cloud users
+> and customers; other regions are currently reserved to Professional
+> Edition customers.
 
 ### Advanced parameters
 
