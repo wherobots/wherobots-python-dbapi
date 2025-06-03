@@ -11,10 +11,15 @@ from rich.console import Console
 from rich.table import Table
 
 from wherobots.db import connect, connect_direct
-from wherobots.db.constants import DEFAULT_ENDPOINT, DEFAULT_SESSION_TYPE
+from wherobots.db.constants import (
+    DEFAULT_ENDPOINT,
+    DEFAULT_SESSION_TYPE,
+    DEFAULT_STORAGE_FORMAT,
+)
 from wherobots.db.connection import Connection
 from wherobots.db.region import Region
 from wherobots.db.session_type import SessionType
+from wherobots.db.result_storage import StorageFormat, Store
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -48,7 +53,35 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wide", help="Enable wide output", action="store_const", const=80, default=30
     )
+    parser.add_argument(
+        "-s",
+        "--store",
+        help="Store results in temporary storage",
+        action="store_true",
+    )
     parser.add_argument("sql", nargs="+", help="SQL query to execute")
+
+    args, unknown = parser.parse_known_args()
+    if args.store:
+        parser.add_argument(
+            "-sf",
+            "--storage-format",
+            help="Storage format for the results",
+            default=DEFAULT_STORAGE_FORMAT,
+            choices=[sf.value for sf in StorageFormat],
+        )
+        parser.add_argument(
+            "--single",
+            help="Generate only a single part file",
+            action="store_true",
+        )
+        parser.add_argument(
+            "-p",
+            "--presigned-url",
+            help="Generate a presigned URL for the results (only when --single is set)",
+            action="store_true",
+        )
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -73,6 +106,16 @@ if __name__ == "__main__":
             token = f.read().strip()
         headers = {"Authorization": f"Bearer {token}"}
 
+    store = None
+    if args.store:
+        store = Store(
+            format=StorageFormat(args.storage_format)
+            if args.storage_format
+            else DEFAULT_STORAGE_FORMAT,
+            single=args.single,
+            generate_presigned_url=args.presigned_url,
+        )
+
     if args.ws_url:
         conn_func = functools.partial(connect_direct, uri=args.ws_url, headers=headers)
     else:
@@ -86,6 +129,7 @@ if __name__ == "__main__":
             region=Region(args.region) if args.region else Region.AWS_US_WEST_2,
             version=args.version,
             session_type=SessionType(args.session_type),
+            store=store,
         )
 
     def render(results: pandas.DataFrame) -> None:

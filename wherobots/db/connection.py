@@ -24,6 +24,7 @@ from wherobots.db.constants import (
 )
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
+from wherobots.db.result_storage import Store
 
 
 @dataclass
@@ -56,12 +57,14 @@ class Connection:
         results_format: Union[ResultsFormat, None] = None,
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
+        store: Union[Store, None] = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout
         self.__results_format = results_format
         self.__data_compression = data_compression
         self.__geometry_representation = geometry_representation
+        self.__store = store
 
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -134,6 +137,9 @@ class Connection:
                 # On a state_updated event telling us the query succeeded,
                 # ask for results.
                 if kind == EventKind.STATE_UPDATED:
+                    logging.info(
+                        "Query %s succeeded; full message is %s", execution_id, message
+                    )
                     self.__request_results(execution_id)
                     return
 
@@ -208,6 +214,17 @@ class Connection:
             "execution_id": execution_id,
             "statement": sql,
         }
+
+        if self.__store:
+            request["store"] = {}
+            if self.__store.format:
+                request["store"]["format"] = self.__store.format.value
+            if self.__store.single:
+                request["store"]["single"] = str(self.__store.single)
+            if self.__store.generate_presigned_url:
+                request["store"]["generate_presigned_url"] = str(
+                    self.__store.generate_presigned_url
+                )
 
         self.__queries[execution_id] = Query(
             sql=sql,
