@@ -6,10 +6,14 @@ runtime and execute Spatial SQL queries.
 
 ## Installation
 
-If you use [Poetry](https://python-poetry.org) in your project, add the
-dependency with `poetry add`:
+To add this library as a dependency in your Python project, use `uv add`
+or `poetry add` as appropriate:
 
 ```
+# For uv-managed projects
+$ uv add wherobots-python-dbapi
+
+# For poetry-managed projects
 $ poetry add wherobots-python-dbapi
 ```
 
