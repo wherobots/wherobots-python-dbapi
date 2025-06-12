@@ -27,6 +27,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.7.12"
+
       - name: Check install local
         run: |
           pip install ".[test]"
@@ -35,8 +40,7 @@ jobs:
 
       - name: Check build
         run: |
-          pip install poetry
-          poetry build
+          uv build
 
       - name: Check install sdist
         run: |
