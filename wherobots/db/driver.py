@@ -11,7 +11,7 @@ from packaging.version import Version
 import platform
 import requests
 import tenacity
-from typing import Union, Dict
+from typing import Final, Union, Dict
 import urllib.parse
 import websockets.sync.client
 import certifi
@@ -25,6 +25,7 @@ from .constants import (
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     MAX_MESSAGE_SIZE,
+    PARAM_STYLE,
     PROTOCOL_VERSION,
     AppStatus,
     DataCompression,
@@ -41,7 +42,7 @@ from .runtime import Runtime
 
 apilevel = "2.0"
 threadsafety = 1
-paramstyle = "pyformat"
+paramstyle: Final[str] = PARAM_STYLE
 
 
 def gen_user_agent_header():

@@ -19,6 +19,8 @@ DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")
 
+PARAM_STYLE = "pyformat"
+
 
 class ExecutionState(LowercaseStrEnum):
     IDLE = auto()
