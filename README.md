@@ -94,12 +94,16 @@ users may find useful:
     client application. The default is EWKT (string) and the most
     convenient for human inspection while still being usable by
     libraries like Shapely.
-* `session_type`: `"single"` or `"multi"`; if set to `"single"`, then each call
-    to `connect()` establishes an exclusive connection to a distinct and dedicated
-    Wherobots runtime; if set to "multi", then multiple `connect()` calls with the
-    same arguments and credentials will connect to the same shared Wherobots runtime;
-    `"single"` is the default.
+* `version`: one of the WherobotsDB runtime versions that is available
+    to you, if you need to pin your usage to a particular, supported
+    WherobotsDB version. Defaults to `"latest"`.
+* `session_type`: `"single"` or `"multi"`; if set to `"single"`, then
+   each call to `connect()` establishes an exclusive connection to a
+   distinct and dedicated Wherobots runtime; if set to "multi", then
+   multiple `connect()` calls with the same arguments and credentials
+   will connect to the same shared Wherobots runtime; `"multi"` is the
+   default.
 
-    Consider multi-session for potential cost savings, but be mindful of
-    performance impacts from shared resources. You might need to adjust
-    cluster size if slowdowns occur, which could affect overall cost.
+   Consider multi-session for potential cost savings, but be mindful of
+   performance impacts from shared resources. You might need to adjust
+   cluster size if slowdowns occur, which could affect overall cost.

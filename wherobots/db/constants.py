@@ -12,6 +12,7 @@ STAGING_ENDPOINT: str = "api.staging.wherobots.com"  # "api.staging.wherobots.co
 
 DEFAULT_RUNTIME: Runtime = Runtime.TINY
 DEFAULT_REGION: Region = Region.AWS_US_WEST_2
+DEFAULT_VERSION: str = "latest"
 DEFAULT_SESSION_TYPE: SessionType = SessionType.MULTI
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
