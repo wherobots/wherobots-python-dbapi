@@ -1,6 +1,6 @@
 [project]
 name = "wherobots-python-dbapi"
-version = "0.17.0"
+version = "0.18.0"
 description = "Python DB-API driver for Wherobots DB"
 authors = [{ name = "Maxime Petazzoni", email = "max@wherobots.com" }]
 requires-python = "~=3.8"
