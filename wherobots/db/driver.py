@@ -24,6 +24,7 @@ from .constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+    DEFAULT_VERSION,
     MAX_MESSAGE_SIZE,
     PARAM_STYLE,
     PROTOCOL_VERSION,
@@ -63,6 +64,7 @@ def connect(
     api_key: Union[str, None] = None,
     runtime: Union[Runtime, None] = None,
     region: Union[Region, None] = None,
+    version: Union[str, None] = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     session_type: Union[SessionType, None] = None,
@@ -85,11 +87,13 @@ def connect(
     host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
     region = region or DEFAULT_REGION
+    version = version or DEFAULT_VERSION
     session_type = session_type or DEFAULT_SESSION_TYPE
 
     logging.info(
-        "Requesting %s runtime in %s from %s ...",
+        "Requesting %s runtime running %s in %s from %s ...",
         runtime.value,
+        version,
         region.value,
         host,
     )
@@ -105,6 +109,7 @@ def connect(
             json={
                 "runtimeId": runtime.value,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
+                "version": version,
                 "sessionType": session_type.value,
             },
             headers=headers,

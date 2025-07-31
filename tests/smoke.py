@@ -21,6 +21,7 @@ if __name__ == "__main__":
     parser.add_argument("--api-key-file", help="File containing the API key")
     parser.add_argument("--token-file", help="File containing the token")
     parser.add_argument("--region", help="Region to connect to (ie. aws-us-west-2)")
+    parser.add_argument("--version", help="Runtime version (ie. latest)")
     parser.add_argument(
         "--session-type",
         help="Type of session to create",
@@ -83,6 +84,7 @@ if __name__ == "__main__":
             shutdown_after_inactive_seconds=args.shutdown_after_inactive_seconds,
             wait_timeout=900,
             region=Region(args.region) if args.region else Region.AWS_US_WEST_2,
+            version=args.version,
             session_type=SessionType(args.session_type),
         )
 
