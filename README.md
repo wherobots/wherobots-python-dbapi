@@ -72,6 +72,7 @@ into. Wherobots Cloud supports the following compute regions:
 * `aws-us-east-1`: AWS US East 1 (N. Virginia)
 * `aws-us-west-2`: AWS US West 2 (Oregon)
 * `aws-eu-west-1`: AWS EU West 1 (Ireland)
+* `aws-ap-south-1`: AWS AP South 1 (Mumbai)
 
 > [!IMPORTANT]
 > The `aws-us-west-2` region is available to all Wherobots Cloud users

@@ -9,6 +9,9 @@ class Region(Enum):
     # EMEA
     AWS_EU_WEST_1 = "aws-eu-west-1"
 
+    # APAC
+    AWS_AP_SOUTH_1 = "aws-ap-south-1"
+
 
 _NAME_TO_ENUM = {region.value: region for region in Region}
 
