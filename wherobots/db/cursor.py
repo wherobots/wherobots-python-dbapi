@@ -74,7 +74,7 @@ class Cursor:
                 self.__description = [
                     (
                         col_name,  # name
-                        _ARROW_TYPE_MAP.get(str(result.schema.field(col_name).type), "STRING"),  # type_code
+                        _ARROW_TYPE_MAP.get(str(result.schema.field(col_name).type).split('<')[0], "STRING"),  # type_code
                         None,  # display_size
                         result.column(col_name).nbytes,  # internal_size
                         None,  # precision
