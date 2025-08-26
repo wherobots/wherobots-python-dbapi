@@ -21,6 +21,7 @@ from wherobots.db.constants import (
     ResultsFormat,
     DataCompression,
     GeometryRepresentation,
+    OutputFormat,
 )
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
@@ -56,12 +57,14 @@ class Connection:
         results_format: Union[ResultsFormat, None] = None,
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
+        output_format: Union[OutputFormat, None] = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout
         self.__results_format = results_format
         self.__data_compression = data_compression
         self.__geometry_representation = geometry_representation
+        self.__output_format = output_format or OutputFormat.PANDAS
 
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -181,7 +184,10 @@ class Connection:
             buffer = pyarrow.py_buffer(result_bytes)
             stream = pyarrow.input_stream(buffer, result_compression)
             with pyarrow.ipc.open_stream(stream) as reader:
-                return reader.read_pandas()
+                if self.__output_format == OutputFormat.ARROW:
+                    return reader.read_all()
+                else:
+                    return reader.read_pandas()
         else:
             return OperationalError(f"Unsupported results format {result_format}")
 
