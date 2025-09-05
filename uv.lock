@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.8, <4"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -1028,6 +1028,39 @@ wheels = [
 ]
 
 [[package]]
+name = "pyarrow-stubs"
+version = "17.19"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.9'",
+]
+dependencies = [
+    { name = "pyarrow", version = "17.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/a7/fc696ec6905698853821ea20b9b46fc1b0a8ddee7a17cda2638c03ac9d8d/pyarrow_stubs-17.19.tar.gz", hash = "sha256:45af6b05ebb2c84352a111c54063db1be8bf54274b8af709c7f1c034e8d84527", size = 83675, upload-time = "2025-03-17T14:15:38.581Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/46/985eae0eb798a749ed774f4211dfa3d06fd29d297a68e247000b33f504fc/pyarrow_stubs-17.19-py3-none-any.whl", hash = "sha256:9909adfbcb1356e859d5e57967d60a13e59030ea223acbcc8693ec4683982403", size = 80170, upload-time = "2025-03-17T14:15:37.091Z" },
+]
+
+[[package]]
+name = "pyarrow-stubs"
+version = "20.0.0.20250825"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version == '3.10.*'",
+    "python_full_version == '3.9.*'",
+]
+dependencies = [
+    { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/2c/2807ba3808971a8870686304a727908f84903be8ede36a3a399a0f36a13d/pyarrow_stubs-20.0.0.20250825.tar.gz", hash = "sha256:e128e575c00a978c851d7fb2f45bf793c3e4dda5c084cfb9e20cf839829c97d9", size = 236556, upload-time = "2025-08-25T02:01:19.92Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/5f/6233b7072f3b635dd29a42cc7d1c9fee8460bf86d4089a88cbf2e1c3580f/pyarrow_stubs-20.0.0.20250825-py3-none-any.whl", hash = "sha256:f6a5242c7874f89fb5c2d8f611dca2ec1125622b53067994a42fa64193ab8d29", size = 235709, upload-time = "2025-08-25T02:01:21.17Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1593,7 +1626,7 @@ wheels = [
 
 [[package]]
 name = "wherobots-python-dbapi"
-version = "0.19.0"
+version = "0.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "cbor2" },
@@ -1631,6 +1664,8 @@ dev = [
     { name = "pre-commit", version = "4.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pyarrow", version = "17.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pyarrow", version = "21.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "pyarrow-stubs", version = "17.19", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "pyarrow-stubs", version = "20.0.0.20250825", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pytest", version = "8.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pytest", version = "8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "rich" },
@@ -1658,6 +1693,7 @@ dev = [
     { name = "pandas" },
     { name = "pre-commit" },
     { name = "pyarrow", specifier = ">=14.0.2" },
+    { name = "pyarrow-stubs", specifier = ">=17.0" },
     { name = "pytest", specifier = ">=8.0.2" },
     { name = "rich", specifier = ">=13.7.1" },
 ]

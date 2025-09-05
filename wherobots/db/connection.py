@@ -72,10 +72,10 @@ class Connection:
         )
         self.__thread.start()
 
-    def __enter__(self):
+    def __enter__(self) -> "Connection":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
     def close(self) -> None:
@@ -175,7 +175,7 @@ class Connection:
         result_compression = results.get("compression")
         logging.info(
             "Received %d bytes of %s-compressed %s results from %s.",
-            len(result_bytes),
+            len(result_bytes) if result_bytes else 0,
             result_compression,
             result_format,
             execution_id,
@@ -216,15 +216,11 @@ class Connection:
         }
 
         if self.__store:
-            request["store"] = {}
-            if self.__store.format:
-                request["store"]["format"] = self.__store.format.value
-            if self.__store.single:
-                request["store"]["single"] = str(self.__store.single)
-            if self.__store.generate_presigned_url:
-                request["store"]["generate_presigned_url"] = str(
-                    self.__store.generate_presigned_url
-                )
+            request["store"] = {
+                "format": self.__store.format.value if self.__store.format else None,
+                "single": str(self.__store.single),
+                "generate_presigned_url": str(self.__store.generate_presigned_url),
+            }
 
         self.__queries[execution_id] = Query(
             sql=sql,

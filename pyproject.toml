@@ -31,6 +31,7 @@ dev = [
     "pre-commit",
     "pytest>=8.0.2",
     "pyarrow>=14.0.2",
+    "pyarrow-stubs>=17.0",
     "pandas",
     "rich>=13.7.1",
     "mypy>=1.14.1",
