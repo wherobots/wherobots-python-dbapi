@@ -10,7 +10,7 @@ import pandas
 from rich.console import Console
 from rich.table import Table
 
-from wherobots.db import connect, connect_direct
+from wherobots.db import connect, connect_direct, errors
 from wherobots.db.constants import DEFAULT_ENDPOINT, DEFAULT_SESSION_TYPE
 from wherobots.db.connection import Connection
 from wherobots.db.region import Region
@@ -103,8 +103,12 @@ if __name__ == "__main__":
             cursor.execute(sql)
             return cursor.fetchall()
 
-    with conn_func() as conn:
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            futures = [pool.submit(execute, conn, s) for s in args.sql]
-            for future in concurrent.futures.as_completed(futures):
-                render(future.result())
+    try:
+        with conn_func() as conn:
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                futures = [pool.submit(execute, conn, s) for s in args.sql]
+                for future in concurrent.futures.as_completed(futures):
+                    render(future.result())
+    except errors.Error as e:
+        sys.stderr.write(f"\n{e}\n")
+        sys.exit(1)

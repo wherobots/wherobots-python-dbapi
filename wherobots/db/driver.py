@@ -116,7 +116,15 @@ def connect(
         )
         resp.raise_for_status()
     except requests.HTTPError as e:
-        raise InterfaceError("Failed to create SQL session!", e)
+        details = str(e)
+        try:
+            info = e.response.json()
+            errors = info.get("errors", [])
+            if errors and isinstance(errors, list):
+                details = f"{errors[0]['message']}: {errors[0]['details']}"
+        except requests.JSONDecodeError:
+            pass
+        raise InterfaceError(f"Failed to create SQL session: {details}") from e
 
     # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
     # session is in READY state.
