@@ -14,6 +14,7 @@ from wherobots.db import connect, connect_direct, errors
 from wherobots.db.constants import DEFAULT_ENDPOINT, DEFAULT_SESSION_TYPE
 from wherobots.db.connection import Connection
 from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
 from wherobots.db.session_type import SessionType
 
 if __name__ == "__main__":
@@ -21,6 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("--api-key-file", help="File containing the API key")
     parser.add_argument("--token-file", help="File containing the token")
     parser.add_argument("--region", help="Region to connect to (ie. aws-us-west-2)")
+    parser.add_argument("--runtime", help="Runtime type (ie. tiny)")
     parser.add_argument("--version", help="Runtime version (ie. latest)")
     parser.add_argument(
         "--session-type",
@@ -83,6 +85,7 @@ if __name__ == "__main__":
             api_key=api_key,
             shutdown_after_inactive_seconds=args.shutdown_after_inactive_seconds,
             wait_timeout=900,
+            runtime=Runtime(args.runtime) if args.runtime else Runtime.MICRO,
             region=Region(args.region) if args.region else Region.AWS_US_WEST_2,
             version=args.version,
             session_type=SessionType(args.session_type),
