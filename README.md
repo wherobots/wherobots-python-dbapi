@@ -105,12 +105,22 @@ users may find useful:
     to you, if you need to pin your usage to a particular, supported
     WherobotsDB version. Defaults to `"latest"`.
 * `session_type`: `"single"` or `"multi"`; if set to `"single"`, then
-   each call to `connect()` establishes an exclusive connection to a
-   distinct and dedicated Wherobots runtime; if set to "multi", then
-   multiple `connect()` calls with the same arguments and credentials
-   will connect to the same shared Wherobots runtime; `"multi"` is the
-   default.
+    each call to `connect()` establishes an exclusive connection to a
+    distinct and dedicated Wherobots runtime; if set to "multi", then
+    multiple `connect()` calls with the same arguments and credentials
+    will connect to the same shared Wherobots runtime; `"multi"` is the
+    default.
 
-   Consider multi-session for potential cost savings, but be mindful of
-   performance impacts from shared resources. You might need to adjust
-   cluster size if slowdowns occur, which could affect overall cost.
+    Consider multi-session for potential cost savings, but be mindful of
+    performance impacts from shared resources. You might need to adjust
+    cluster size if slowdowns occur, which could affect overall cost.
+* `shutdown_after_inactive_seconds`: how long the runtime waits and
+    stays running after all clients have disconnected. This delay gives
+    an opportunity for clients to reconnect to a previously-established
+    runtime without having to start a new one.
+
+    If you're using a simple "connect-query-disconnect" pattern from
+    your application, you can set this parameter to a value greater than
+    your expected time between queries and effectively get a continuously
+    running SQL session runtime without any complex connection management
+    in your application.
