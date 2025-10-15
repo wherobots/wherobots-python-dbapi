@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class Runtime(Enum):
+    MICRO = "micro"
     TINY = "tiny"
     SMALL = "small"
     MEDIUM = "medium"
