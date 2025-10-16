@@ -1,6 +1,9 @@
 import queue
 from typing import Any, Optional, List, Tuple, Dict
 
+import pandas
+import pyarrow
+
 from .errors import DatabaseError, ProgrammingError
 
 _TYPE_MAP = {
@@ -11,6 +14,16 @@ _TYPE_MAP = {
     "timedelta[ns]": "DATETIME",
     "bool": "NUMBER",  # Assuming boolean is stored as number
     "bytes": "BINARY",
+}
+
+_ARROW_TYPE_MAP = {
+    "string": "STRING",
+    "int64": "NUMBER",
+    "double": "NUMBER",
+    "float64": "NUMBER",
+    "timestamp": "DATETIME",
+    "bool": "NUMBER",
+    "binary": "BINARY",
 }
 
 
@@ -53,21 +66,40 @@ class Cursor:
         if isinstance(result, DatabaseError):
             raise result
 
-        self.__rowcount = len(result)
-        self.__results = result
-        if not result.empty:
-            self.__description = [
-                (
-                    col_name,  # name
-                    _TYPE_MAP.get(str(result[col_name].dtype), "STRING"),  # type_code
-                    None,  # display_size
-                    result[col_name].memory_usage(),  # internal_size
-                    None,  # precision
-                    None,  # scale
-                    True,  # null_ok; Assuming all columns can accept NULL values
-                )
-                for col_name in result.columns
-            ]
+        # Handle both Arrow tables and pandas DataFrames
+        if isinstance(result, pyarrow.Table):
+            self.__rowcount = len(result)
+            self.__results = result
+            if len(result) > 0:
+                self.__description = [
+                    (
+                        col_name,  # name
+                        _ARROW_TYPE_MAP.get(str(result.schema.field(col_name).type).split('<')[0], "STRING"),  # type_code
+                        None,  # display_size
+                        result.column(col_name).nbytes,  # internal_size
+                        None,  # precision
+                        None,  # scale
+                        True,  # null_ok; Assuming all columns can accept NULL values
+                    )
+                    for col_name in result.column_names
+                ]
+        else:
+            # pandas DataFrame
+            self.__rowcount = len(result)
+            self.__results = result
+            if not result.empty:
+                self.__description = [
+                    (
+                        col_name,  # name
+                        _TYPE_MAP.get(str(result[col_name].dtype), "STRING"),  # type_code
+                        None,  # display_size
+                        result[col_name].memory_usage(),  # internal_size
+                        None,  # precision
+                        None,  # scale
+                        True,  # null_ok; Assuming all columns can accept NULL values
+                    )
+                    for col_name in result.columns
+                ]
 
         return self.__results
 
@@ -89,21 +121,72 @@ class Cursor:
     ) -> None:
         raise NotImplementedError
 
+    def __get_row_data(self, results, start_row: int, end_row: int = None) -> List[Any]:
+        """Helper method to extract row data from either Arrow table or pandas DataFrame."""
+        if isinstance(results, pyarrow.Table):
+            # Convert to pandas for easier row-wise access
+            # TODO: This could be optimized to avoid conversion for large tables
+            df = results.to_pandas()
+            if end_row is None:
+                return df.iloc[start_row:]
+            else:
+                return df.iloc[start_row:end_row]
+        else:
+            # pandas DataFrame
+            if end_row is None:
+                return results.iloc[start_row:]
+            else:
+                return results.iloc[start_row:end_row]
+
     def fetchone(self) -> Any:
-        results = self.__get_results()[self.__current_row :]
-        if len(results) == 0:
+        results = self.__get_results()
+        if self.__current_row >= len(results):
             return None
-        self.__current_row += 1
-        return results[0]
+        
+        if isinstance(results, pyarrow.Table):
+            # For Arrow tables, return the native result when fetching
+            if self.__current_row == 0:
+                self.__current_row = len(results)  # Mark all as consumed
+                return results
+            else:
+                return None
+        else:
+            # pandas DataFrame - return single row
+            row_data = self.__get_row_data(results, self.__current_row, self.__current_row + 1)
+            if len(row_data) == 0:
+                return None
+            self.__current_row += 1
+            return row_data.iloc[0] if hasattr(row_data, 'iloc') else row_data
 
     def fetchmany(self, size: int = None) -> List[Any]:
         size = size or self.arraysize
-        results = self.__get_results()[self.__current_row : self.__current_row + size]
-        self.__current_row += size
-        return results
+        results = self.__get_results()
+        
+        if isinstance(results, pyarrow.Table):
+            # For Arrow tables, return the native result
+            if self.__current_row == 0:
+                self.__current_row = len(results)  # Mark all as consumed
+                return results
+            else:
+                return []
+        else:
+            # pandas DataFrame
+            row_data = self.__get_row_data(results, self.__current_row, self.__current_row + size)
+            self.__current_row += size
+            return row_data
 
     def fetchall(self) -> List[Any]:
-        return self.__get_results()[self.__current_row :]
+        results = self.__get_results()
+        
+        if isinstance(results, pyarrow.Table):
+            # For Arrow tables, return the native Arrow table
+            self.__current_row = len(results)  # Mark all as consumed
+            return results
+        else:
+            # pandas DataFrame
+            row_data = self.__get_row_data(results, self.__current_row)
+            self.__current_row = len(results)  # Mark all as consumed
+            return row_data
 
     def close(self) -> None:
         """Close the cursor."""
