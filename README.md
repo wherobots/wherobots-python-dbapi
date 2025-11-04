@@ -114,6 +114,10 @@ users may find useful:
     Consider multi-session for potential cost savings, but be mindful of
     performance impacts from shared resources. You might need to adjust
     cluster size if slowdowns occur, which could affect overall cost.
+* `force_new`: passing `force_new=True` forces Wherobots Cloud to create
+    and start a new SQL Session runtime for this connection instead of
+    attempting to reuse an existing, available one. Note that this can
+    severely impact the delay in obtaining a connection to your runtime.
 * `shutdown_after_inactive_seconds`: how long the runtime waits and
     stays running after all clients have disconnected. This delay gives
     an opportunity for clients to reconnect to a previously-established
