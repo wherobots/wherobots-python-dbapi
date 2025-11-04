@@ -68,6 +68,7 @@ def connect(
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
     session_type: Union[SessionType, None] = None,
+    force_new: bool = False,
     shutdown_after_inactive_seconds: Union[int, None] = None,
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
@@ -91,7 +92,8 @@ def connect(
     session_type = session_type or DEFAULT_SESSION_TYPE
 
     logging.info(
-        "Requesting %s runtime running %s in %s from %s ...",
+        "Requesting %s%s runtime running %s in %s from %s ...",
+        "new " if force_new else "",
         runtime.value,
         version,
         region.value,
@@ -105,7 +107,7 @@ def connect(
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
-            params={"region": region.value},
+            params={"region": region.value, "force_new": force_new},
             json={
                 "runtimeId": runtime.value,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
