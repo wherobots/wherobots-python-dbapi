@@ -19,6 +19,7 @@ class Runtime(Enum):
     XXXX_LARGE_HIMEM = "4x-large-himem"
 
     # GPU
+    MICRO_A10_GPU = "micro-a10-gpu"
     TINY_A10_GPU = "tiny-a10-gpu"
     SMALL_A10_GPU = "small-a10-gpu"
     MEDIUM_A10_GPU = "medium-a10-gpu"
