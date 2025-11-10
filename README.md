@@ -59,6 +59,42 @@ It also implements the `close()` method, as suggested by the PEP-2049
 specification, to support situations where the cursor is wrapped in a
 `contextmanager.closing()`.
 
+### Arrow table output
+
+For improved performance and native GeoArrow support, you can configure
+the connection to return PyArrow tables instead of pandas DataFrames:
+
+```python
+from wherobots.db import connect
+from wherobots.db.constants import OutputFormat, ResultsFormat, GeometryRepresentation
+from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
+
+with connect(
+        api_key='...',
+        runtime=Runtime.TINY,
+        region=Region.AWS_US_WEST_2,
+        results_format=ResultsFormat.ARROW,
+        output_format=OutputFormat.ARROW,
+        geometry_representation=GeometryRepresentation.WKB) as conn:
+    curr = conn.cursor()
+    curr.execute("SELECT * FROM buildings LIMIT 1000")
+    results = curr.fetchall()
+    
+    # results is now a pyarrow.Table instead of pandas.DataFrame
+    print(f"Result type: {type(results)}")
+    print(f"Schema: {results.schema}")
+    print(f"Row count: {len(results)}")
+    
+    # Convert to pandas only when needed:
+    # df = results.to_pandas()
+```
+
+This is particularly beneficial when working with:
+* Large datasets (reduced memory usage and faster operations)
+* GeoArrow geometries (native spatial data structures)
+* Arrow-native downstream processing pipelines
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
@@ -93,6 +129,10 @@ users may find useful:
 * `results_format`: one of the `ResultsFormat` enum values;
     Arrow encoding is the default and most efficient format for
     receiving query results.
+* `output_format`: one of the `OutputFormat` enum values; controls
+    whether query results are returned as PyArrow tables (`ARROW`) or 
+    pandas DataFrames (`PANDAS`, default). Use `ARROW` for better
+    performance with large datasets and native GeoArrow support.
 * `data_compression`: one of the `DataCompression` enum values; Brotli
     compression is the default and the most efficient compression
     algorithm for receiving query results.
