@@ -24,7 +24,6 @@ from .constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
-    DEFAULT_VERSION,
     MAX_MESSAGE_SIZE,
     PARAM_STYLE,
     PROTOCOL_VERSION,
@@ -88,14 +87,13 @@ def connect(
     host = host or DEFAULT_ENDPOINT
     runtime = runtime or DEFAULT_RUNTIME
     region = region or DEFAULT_REGION
-    version = version or DEFAULT_VERSION
     session_type = session_type or DEFAULT_SESSION_TYPE
 
     logging.info(
-        "Requesting %s%s runtime running %s in %s from %s ...",
+        "Requesting %s%s runtime %sin %s from %s ...",
         "new " if force_new else "",
         runtime.value,
-        version,
+        f"running {version} " if version else "",
         region.value,
         host,
     )

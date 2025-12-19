@@ -103,7 +103,8 @@ users may find useful:
     libraries like Shapely.
 * `version`: one of the WherobotsDB runtime versions that is available
     to you, if you need to pin your usage to a particular, supported
-    WherobotsDB version. Defaults to `"latest"`.
+    WherobotsDB version. Defaults to the latest, most-optimized version
+    of WherobotsDB available to your subscription.
 * `session_type`: `"single"` or `"multi"`; if set to `"single"`, then
     each call to `connect()` establishes an exclusive connection to a
     distinct and dedicated Wherobots runtime; if set to "multi", then
