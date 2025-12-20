@@ -30,6 +30,7 @@ from .constants import (
     AppStatus,
     DataCompression,
     GeometryRepresentation,
+    OutputFormat,
     ResultsFormat,
     SessionType,
 )
@@ -72,6 +73,7 @@ def connect(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    output_format: Union[OutputFormat, None] = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -165,6 +167,7 @@ def connect(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        output_format=output_format,
     )
 
 
@@ -185,6 +188,7 @@ def connect_direct(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    output_format: Union[OutputFormat, None] = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
 
@@ -207,4 +211,5 @@ def connect_direct(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        output_format=output_format,
     )

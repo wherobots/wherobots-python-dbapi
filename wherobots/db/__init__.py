@@ -10,6 +10,12 @@ from .errors import (
     ProgrammingError,
     NotSupportedError,
 )
+from .constants import (
+    OutputFormat,
+    ResultsFormat,
+    DataCompression,
+    GeometryRepresentation,
+)
 from .region import Region
 from .runtime import Runtime
 
@@ -25,6 +31,10 @@ __all__ = [
     "OperationalError",
     "ProgrammingError",
     "NotSupportedError",
+    "OutputFormat",
+    "ResultsFormat",
+    "DataCompression",
+    "GeometryRepresentation",
     "Region",
     "Runtime",
 ]

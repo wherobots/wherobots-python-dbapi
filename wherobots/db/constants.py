@@ -84,6 +84,11 @@ class GeometryRepresentation(LowercaseStrEnum):
     GEOJSON = auto()
 
 
+class OutputFormat(LowercaseStrEnum):
+    PANDAS = auto()
+    ARROW = auto()
+
+
 class AppStatus(StrEnum):
     PENDING = auto()
     PREPARING = auto()
