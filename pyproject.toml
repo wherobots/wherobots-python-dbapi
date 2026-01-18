@@ -3,7 +3,7 @@ name = "wherobots-python-dbapi"
 version = "0.22.0"
 description = "Python DB-API driver for Wherobots DB"
 authors = [{ name = "Maxime Petazzoni", email = "max@wherobots.com" }]
-requires-python = ">=3.8, <4"
+requires-python = ">=3.10, <4"
 readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
