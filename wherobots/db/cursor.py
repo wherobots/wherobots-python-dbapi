@@ -1,7 +1,8 @@
 import queue
-from typing import Any, Optional, List, Tuple, Dict
+from typing import Any, List, Tuple, Dict
 
 from .errors import DatabaseError, ProgrammingError
+from .store import Store, StoreResult
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -20,20 +21,21 @@ class Cursor:
         self.__cancel_fn = cancel_fn
 
         self.__queue: queue.Queue = queue.Queue()
-        self.__results: Optional[list[Any]] = None
-        self.__current_execution_id: Optional[str] = None
+        self.__results: list[Any] | None = None
+        self.__store_result: StoreResult | None = None
+        self.__current_execution_id: str | None = None
         self.__current_row: int = 0
 
         # Description and row count are set by the last executed operation.
         # Their default values are defined by PEP-0249.
-        self.__description: Optional[List[Tuple]] = None
+        self.__description: List[Tuple] | None = None
         self.__rowcount: int = -1
 
         # Array-size is also defined by PEP-0249 and is expected to be read/writable.
         self.arraysize: int = 1
 
     @property
-    def description(self) -> Optional[List[Tuple]]:
+    def description(self) -> List[Tuple] | None:
         return self.__description
 
     @property
@@ -43,7 +45,7 @@ class Cursor:
     def __on_execution_result(self, result) -> None:
         self.__queue.put(result)
 
-    def __get_results(self) -> Optional[List[Tuple[Any, ...]]]:
+    def __get_results(self) -> List[Tuple[Any, ...]] | None:
         if not self.__current_execution_id:
             raise ProgrammingError("No query has been executed yet")
         if self.__results is not None:
@@ -52,6 +54,10 @@ class Cursor:
         result = self.__queue.get()
         if isinstance(result, DatabaseError):
             raise result
+
+        # Unpack store result if present (result is a tuple of (DataFrame, StoreResult))
+        if isinstance(result, tuple):
+            result, self.__store_result = result
 
         self.__rowcount = len(result)
         self.__results = result
@@ -71,18 +77,39 @@ class Cursor:
 
         return self.__results
 
-    def execute(self, operation: str, parameters: Dict[str, Any] = None) -> None:
+    def execute(
+        self,
+        operation: str,
+        parameters: Dict[str, Any] | None = None,
+        store: Store | None = None,
+    ) -> None:
         if self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
         self.__results = None
+        self.__store_result = None
         self.__current_row = 0
         self.__rowcount = -1
         self.__description = None
 
         self.__current_execution_id = self.__exec_fn(
-            operation % (parameters or {}), self.__on_execution_result
+            operation % (parameters or {}), self.__on_execution_result, store
         )
+
+    def get_store_result(self) -> StoreResult | None:
+        """Get the store result for the last executed query.
+
+        Returns the StoreResult containing the URI and size of the stored
+        results, or None if the query was not configured to store results.
+
+        This method blocks until the query completes.
+        """
+        if not self.__current_execution_id:
+            raise ProgrammingError("No query has been executed yet")
+
+        # Ensure we've waited for the result
+        self.__get_results()
+        return self.__store_result
 
     def executemany(
         self, operation: str, seq_of_parameters: List[Dict[str, Any]]
