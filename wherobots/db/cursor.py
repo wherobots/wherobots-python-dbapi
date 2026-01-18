@@ -1,7 +1,8 @@
 import queue
 from typing import Any, List, Tuple, Dict
 
-from .errors import DatabaseError, ProgrammingError
+from .errors import ProgrammingError
+from .results import ExecutionResult
 from .store import Store, StoreResult
 
 _TYPE_MAP = {
@@ -51,28 +52,34 @@ class Cursor:
         if self.__results is not None:
             return self.__results
 
-        result = self.__queue.get()
-        if isinstance(result, DatabaseError):
-            raise result
+        execution_result = self.__queue.get()
+        if not isinstance(execution_result, ExecutionResult):
+            raise ProgrammingError("Unexpected result type")
 
-        # Unpack store result if present (result is a tuple of (DataFrame, StoreResult))
-        if isinstance(result, tuple):
-            result, self.__store_result = result
+        if execution_result.error:
+            raise execution_result.error
 
-        self.__rowcount = len(result)
-        self.__results = result
-        if not result.empty:
+        self.__store_result = execution_result.store_result
+        results = execution_result.results
+
+        # Results is None when results are stored in cloud storage
+        if results is None:
+            return None
+
+        self.__rowcount = len(results)
+        self.__results = results
+        if not results.empty:
             self.__description = [
                 (
                     col_name,  # name
-                    _TYPE_MAP.get(str(result[col_name].dtype), "STRING"),  # type_code
+                    _TYPE_MAP.get(str(results[col_name].dtype), "STRING"),  # type_code
                     None,  # display_size
-                    result[col_name].memory_usage(),  # internal_size
+                    results[col_name].memory_usage(),  # internal_size
                     None,  # precision
                     None,  # scale
                     True,  # null_ok; Assuming all columns can accept NULL values
                 )
-                for col_name in result.columns
+                for col_name in results.columns
             ]
 
         return self.__results

@@ -24,6 +24,7 @@ from wherobots.db.constants import (
 )
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
+from wherobots.db.results import ExecutionResult
 from wherobots.db.store import Store, StoreResult
 
 
@@ -150,8 +151,12 @@ class Connection:
                             store_result.size,
                         )
                         query.state = ExecutionState.COMPLETED
-                        # Return empty DataFrame with the StoreResult
-                        query.handler((pandas.DataFrame(), store_result))
+                        query.handler(
+                            ExecutionResult(
+                                result=pandas.DataFrame(),
+                                store_result=store_result,
+                            )
+                        )
                         return
 
                     # No store configured, request results normally
@@ -165,13 +170,15 @@ class Connection:
                     return
 
                 query.state = ExecutionState.COMPLETED
-                query.handler(self._handle_results(execution_id, results))
+                query.handler(
+                    ExecutionResult(results=self._handle_results(execution_id, results))
+                )
             elif query.state == ExecutionState.CANCELLED:
                 logging.info(
                     "Query %s has been cancelled; returning empty results.",
                     execution_id,
                 )
-                query.handler(pandas.DataFrame())
+                query.handler(ExecutionResult(results=pandas.DataFrame()))
                 self.__queries.pop(execution_id)
             elif query.state == ExecutionState.FAILED:
                 # Don't do anything here; the ERROR event is coming with more
@@ -180,7 +187,7 @@ class Connection:
         elif kind == EventKind.ERROR:
             query.state = ExecutionState.FAILED
             error = message.get("message")
-            query.handler(OperationalError(error))
+            query.handler(ExecutionResult(error=OperationalError(error)))
         else:
             logging.warning("Received unknown %s event!", kind)
 
