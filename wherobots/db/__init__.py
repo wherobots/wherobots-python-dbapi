@@ -12,6 +12,7 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
+from .store import Store, StorageFormat, StoreResult
 
 __all__ = [
     "Connection",
@@ -27,4 +28,7 @@ __all__ = [
     "NotSupportedError",
     "Region",
     "Runtime",
+    "Store",
+    "StorageFormat",
+    "StoreResult",
 ]
