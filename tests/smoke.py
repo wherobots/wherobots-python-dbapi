@@ -16,6 +16,8 @@ from wherobots.db.connection import Connection
 from wherobots.db.region import Region
 from wherobots.db.runtime import Runtime
 from wherobots.db.session_type import SessionType
+from wherobots.db.models import Store, StoreResult
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -24,6 +26,8 @@ if __name__ == "__main__":
     parser.add_argument("--region", help="Region to connect to (ie. aws-us-west-2)")
     parser.add_argument("--runtime", help="Runtime type (ie. tiny)")
     parser.add_argument("--version", help="Runtime version (ie. latest)")
+    parser.add_argument("--force-new", action="store_true")
+    parser.add_argument("--store", action="store_true")
     parser.add_argument(
         "--session-type",
         help="Type of session to create",
@@ -64,6 +68,7 @@ if __name__ == "__main__":
     api_key = None
     token = None
     headers = None
+    store = None
 
     if args.api_key_file:
         with open(args.api_key_file) as f:
@@ -74,6 +79,10 @@ if __name__ == "__main__":
         with open(args.token_file) as f:
             token = f.read().strip()
         headers = {"Authorization": f"Bearer {token}"}
+
+    if args.store:
+        store = Store.for_download()
+        logging.info("Will requests for results to be stored in cloud storage.")
 
     if args.ws_url:
         conn_func = functools.partial(connect_direct, uri=args.ws_url, headers=headers)
@@ -88,23 +97,40 @@ if __name__ == "__main__":
             runtime=Runtime(args.runtime) if args.runtime else Runtime.MICRO,
             region=Region(args.region) if args.region else Region.AWS_US_WEST_2,
             version=args.version,
+            force_new=args.force_new,
             session_type=SessionType(args.session_type),
         )
 
-    def render(results: pandas.DataFrame) -> None:
-        table = Table()
+    def render_df(df: pandas.DataFrame) -> Table:
+        table = Table(show_header=True)
         table.add_column("#")
-        for column in results.columns:
+        for column in df.columns:
             table.add_column(column, max_width=args.wide, no_wrap=True)
-        for row in results.itertuples(name=None):
+        for row in df.itertuples(name=None):
             r = [str(x) for x in row]
             table.add_row(*r)
-        Console().print(table)
+        return table
 
-    def execute(conn: Connection, sql: str) -> pandas.DataFrame:
+    def render_stored(sr: StoreResult) -> Table:
+        table = Table(show_header=True)
+        table.add_column("URI")
+        table.add_column("Size", justify="right")
+        table.add_row(sr.result_uri, str(sr.size))
+        return table
+
+    def render(results: pandas.DataFrame | StoreResult) -> None:
+        if isinstance(results, StoreResult):
+            Console().print(render_stored(results))
+        else:
+            Console().print(render_df(results))
+
+    def execute(conn: Connection, sql: str) -> pandas.DataFrame | StoreResult:
         with conn.cursor() as cursor:
-            cursor.execute(sql)
-            return cursor.fetchall()
+            cursor.execute(sql, store=store)
+            if args.store:
+                return cursor.get_store_result()
+            else:
+                return cursor.fetchall()
 
     try:
         with conn_func() as conn:
