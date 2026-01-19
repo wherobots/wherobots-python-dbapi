@@ -151,12 +151,7 @@ class Connection:
                             store_result.size,
                         )
                         query.state = ExecutionState.COMPLETED
-                        query.handler(
-                            ExecutionResult(
-                                result=pandas.DataFrame(),
-                                store_result=store_result,
-                            )
-                        )
+                        query.handler(ExecutionResult(store_result=store_result))
                         return
 
                     # No store configured, request results normally
