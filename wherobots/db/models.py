@@ -1,14 +1,9 @@
 from dataclasses import dataclass
-from enum import auto
-from strenum import LowercaseStrEnum
 
+import pandas
 
-class StorageFormat(LowercaseStrEnum):
-    """Storage formats for storing query results to cloud storage."""
-
-    PARQUET = auto()
-    CSV = auto()
-    GEOJSON = auto()
+from .constants import DEFAULT_STORAGE_FORMAT
+from .types import StorageFormat
 
 
 @dataclass(frozen=True)
@@ -38,7 +33,7 @@ class Store:
             Requires single=True.
     """
 
-    format: StorageFormat | None = None
+    format: StorageFormat
     single: bool = False
     generate_presigned_url: bool = False
 
@@ -54,9 +49,32 @@ class Store:
         single file mode and presigned URL generation enabled.
 
         Args:
-            format: The storage format. Defaults to parquet if not specified.
+            format: The storage format.
 
         Returns:
             A Store configured for single-file download with presigned URL.
         """
-        return cls(format=format, single=True, generate_presigned_url=True)
+        return cls(
+            format=format or DEFAULT_STORAGE_FORMAT,
+            single=True,
+            generate_presigned_url=True,
+        )
+
+
+@dataclass
+class ExecutionResult:
+    """Result of a query execution.
+
+    This class encapsulates all possible outcomes of a query execution:
+    a DataFrame result, an error, or a store result (when results are
+    written to cloud storage).
+
+    Attributes:
+        results: The query results as a pandas DataFrame, or None if an error occurred.
+        error: The error that occurred during execution, or None if successful.
+        store_result: The store result if results were written to cloud storage.
+    """
+
+    results: pandas.DataFrame | None = None
+    error: Exception | None = None
+    store_result: StoreResult | None = None

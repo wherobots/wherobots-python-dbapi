@@ -2,8 +2,7 @@ import queue
 from typing import Any, List, Tuple, Dict
 
 from .errors import ProgrammingError
-from .results import ExecutionResult
-from .store import Store, StoreResult
+from .models import ExecutionResult, Store, StoreResult
 
 _TYPE_MAP = {
     "object": "STRING",
