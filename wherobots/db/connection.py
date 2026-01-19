@@ -240,8 +240,8 @@ class Connection:
         if store:
             request["store"] = {
                 "format": store.format.value if store.format else None,
-                "single": store.single,
-                "generate_presigned_url": store.generate_presigned_url,
+                "single": str(store.single).lower(),
+                "generate_presigned_url": str(store.generate_presigned_url).lower(),
             }
 
         self.__queries[execution_id] = Query(
