@@ -59,6 +59,46 @@ It also implements the `close()` method, as suggested by the PEP-2049
 specification, to support situations where the cursor is wrapped in a
 `contextmanager.closing()`.
 
+### Storing results in cloud storage
+
+For large query results, you can store them directly in cloud storage
+instead of retrieving them over the connection. This is useful when
+results are too large to transfer efficiently, or when you want to
+process them later with other tools.
+
+```python
+from wherobots.db import connect, Store, StorageFormat
+from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
+
+with connect(
+        api_key='...',
+        runtime=Runtime.TINY,
+        region=Region.AWS_US_WEST_2) as conn:
+    curr = conn.cursor()
+
+    # Store results with a presigned URL for easy download
+    curr.execute(
+        "SELECT * FROM wherobots_open_data.overture.places LIMIT 1000",
+        store=Store.for_download()
+    )
+    store_result = curr.get_store_result()
+    print(f"Results stored at: {store_result.result_uri}")
+    print(f"Size: {store_result.size} bytes")
+```
+
+The `Store` class supports the following options:
+
+* `format`: output format - `StorageFormat.PARQUET` (default),
+    `StorageFormat.CSV`, or `StorageFormat.GEOJSON`
+* `single`: if `True`, write results to a single file instead of
+    multiple partitioned files (default: `True`)
+* `generate_presigned_url`: if `True`, generate a presigned URL for
+    downloading results (default: `False`)
+
+Use `Store.for_download()` as a convenient shorthand for storing results
+as a single Parquet file with a presigned URL.
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
