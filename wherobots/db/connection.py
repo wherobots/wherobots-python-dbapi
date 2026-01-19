@@ -13,8 +13,11 @@ import websockets.exceptions
 import websockets.protocol
 import websockets.sync.client
 
-from wherobots.db.constants import (
-    DEFAULT_READ_TIMEOUT_SECONDS,
+from .constants import DEFAULT_READ_TIMEOUT_SECONDS
+from .cursor import Cursor
+from .errors import NotSupportedError, OperationalError
+from .models import ExecutionResult, Store, StoreResult
+from .types import (
     RequestKind,
     EventKind,
     ExecutionState,
@@ -22,10 +25,6 @@ from wherobots.db.constants import (
     DataCompression,
     GeometryRepresentation,
 )
-from wherobots.db.cursor import Cursor
-from wherobots.db.errors import NotSupportedError, OperationalError
-from wherobots.db.results import ExecutionResult
-from wherobots.db.store import Store, StoreResult
 
 
 @dataclass
@@ -239,7 +238,7 @@ class Connection:
 
         if store:
             request["store"] = {
-                "format": store.format.value if store.format else None,
+                "format": store.format.value,
                 "single": str(store.single).lower(),
                 "generate_presigned_url": str(store.generate_presigned_url).lower(),
             }

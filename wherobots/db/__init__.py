@@ -10,9 +10,10 @@ from .errors import (
     ProgrammingError,
     NotSupportedError,
 )
+from .models import Store, StoreResult
 from .region import Region
 from .runtime import Runtime
-from .store import Store, StorageFormat, StoreResult
+from .types import StorageFormat
 
 __all__ = [
     "Connection",

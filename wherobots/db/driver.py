@@ -27,11 +27,6 @@ from .constants import (
     MAX_MESSAGE_SIZE,
     PARAM_STYLE,
     PROTOCOL_VERSION,
-    AppStatus,
-    DataCompression,
-    GeometryRepresentation,
-    ResultsFormat,
-    SessionType,
 )
 from .errors import (
     InterfaceError,
@@ -39,6 +34,13 @@ from .errors import (
 )
 from .region import Region
 from .runtime import Runtime
+from .session_type import SessionType
+from .types import (
+    AppStatus,
+    DataCompression,
+    GeometryRepresentation,
+    ResultsFormat,
+)
 
 apilevel = "2.0"
 threadsafety = 1
