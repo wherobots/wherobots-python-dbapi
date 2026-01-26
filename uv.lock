@@ -884,7 +884,7 @@ wheels = [
 
 [[package]]
 name = "wherobots-python-dbapi"
-version = "0.22.0"
+version = "0.23.0"
 source = { editable = "." }
 dependencies = [
     { name = "cbor2" },
