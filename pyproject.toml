@@ -8,7 +8,7 @@ readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "packaging",
-    "requests>=2.31.0",
+    "requests>=2.32.5",
     "websockets>=13.0",
     "tenacity>=8.2.3",
     "cbor2>=5.6.3",
