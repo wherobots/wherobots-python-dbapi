@@ -1,0 +1,10 @@
+name: PR Size Labeler
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  label-size:
+    uses: wherobots/ci-tools/.github/workflows/pr-size-labeler.yaml@main
+    secrets: inherit
