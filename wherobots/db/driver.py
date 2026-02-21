@@ -46,6 +46,10 @@ apilevel = "2.0"
 threadsafety = 1
 paramstyle: Final[str] = PARAM_STYLE
 
+# HTTP status codes that indicate transient server-side issues and should be retried.
+# This follows the industry-standard set used by urllib3.util.Retry's status_forcelist.
+TRANSIENT_HTTP_STATUS_CODES = {429, 502, 503, 504}
+
 
 def gen_user_agent_header():
     try:
@@ -135,9 +139,16 @@ def connect(
     @tenacity.retry(
         stop=tenacity.stop_after_delay(wait_timeout),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
-        retry=tenacity.retry_if_not_exception_type(
-            (requests.HTTPError, OperationalError)
+        retry=(
+            tenacity.retry_if_exception(
+                lambda e: (
+                    isinstance(e, requests.HTTPError)
+                    and e.response.status_code in TRANSIENT_HTTP_STATUS_CODES
+                )
+            )
+            | tenacity.retry_if_exception_type(tenacity.TryAgain)
         ),
+        reraise=True,
     )
     def get_session_uri() -> str:
         r = requests.get(session_id_url, headers=headers)
