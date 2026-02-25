@@ -45,6 +45,7 @@ class EventKind(LowercaseStrEnum):
     STATE_UPDATED = auto()
     EXECUTION_RESULT = auto()
     ERROR = auto()
+    EXECUTION_PROGRESS = auto()
 
 
 class ResultsFormat(LowercaseStrEnum):
