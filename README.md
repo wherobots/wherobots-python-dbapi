@@ -99,6 +99,38 @@ The `Store` class supports the following options:
 Use `Store.for_download()` as a convenient shorthand for storing results
 as a single Parquet file with a presigned URL.
 
+### Execution progress
+
+You can monitor the progress of running queries by registering a
+progress handler on the connection.
+
+```python
+from wherobots.db import connect, ProgressInfo
+from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
+
+def on_progress(info: ProgressInfo) -> None:
+    print(f"{info.tasks_completed}/{info.tasks_total} tasks "
+          f"({info.tasks_active} active)")
+
+with connect(
+        api_key='...',
+        runtime=Runtime.TINY,
+        region=Region.AWS_US_WEST_2) as conn:
+    conn.set_progress_handler(on_progress)
+    curr = conn.cursor()
+    curr.execute("SELECT ...")
+    results = curr.fetchall()
+```
+
+The handler receives a `ProgressInfo` object with `execution_id`,
+`tasks_total`, `tasks_completed`, and `tasks_active` fields. Pass
+`None` to `set_progress_handler()` to disable progress reporting.
+
+Progress events are best-effort and may not be available for all query
+types or server versions. The handler is simply not invoked when no
+progress information is available.
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`

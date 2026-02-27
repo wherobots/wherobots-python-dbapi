@@ -78,3 +78,16 @@ class ExecutionResult:
     results: pandas.DataFrame | None = None
     error: Exception | None = None
     store_result: StoreResult | None = None
+
+
+@dataclass(frozen=True)
+class ProgressInfo:
+    """Progress information for a running query.
+
+    Mirrors the ``execution_progress`` event sent by the SQL session.
+    """
+
+    execution_id: str
+    tasks_total: int
+    tasks_completed: int
+    tasks_active: int
