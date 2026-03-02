@@ -31,18 +31,32 @@ class Store:
         single: If True, store as a single file. If False, store as multiple files.
         generate_presigned_url: If True, generate a presigned URL for the result.
             Requires single=True.
+        options: Optional dict of format-specific Spark DataFrameWriter options
+            (e.g. ``{"header": "false", "delimiter": "|"}`` for CSV). These are
+            applied after the server's default options, so they can override them.
+            An empty dict is normalized to None.
     """
 
     format: StorageFormat
     single: bool = False
     generate_presigned_url: bool = False
+    options: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.generate_presigned_url and not self.single:
             raise ValueError("Presigned URL can only be generated when single=True")
+        # Normalize empty options to None and defensively copy.
+        if self.options:
+            self.options = dict(self.options)
+        else:
+            self.options = None
 
     @classmethod
-    def for_download(cls, format: StorageFormat | None = None) -> "Store":
+    def for_download(
+        cls,
+        format: StorageFormat | None = None,
+        options: dict[str, str] | None = None,
+    ) -> "Store":
         """Create a configuration for downloading results via a presigned URL.
 
         This is a convenience method that creates a configuration with
@@ -50,6 +64,7 @@ class Store:
 
         Args:
             format: The storage format.
+            options: Optional format-specific Spark DataFrameWriter options.
 
         Returns:
             A Store configured for single-file download with presigned URL.
@@ -58,6 +73,7 @@ class Store:
             format=format or DEFAULT_STORAGE_FORMAT,
             single=True,
             generate_presigned_url=True,
+            options=options,
         )
 
 

@@ -99,6 +99,27 @@ The `Store` class supports the following options:
 Use `Store.for_download()` as a convenient shorthand for storing results
 as a single Parquet file with a presigned URL.
 
+#### Store options
+
+You can pass format-specific Spark write options through the `options`
+parameter. These correspond to the options available in Spark's
+`DataFrameWriter` and are applied after the server's default options,
+allowing you to override them.
+
+```python
+# CSV without headers and a custom delimiter
+store = Store.for_download(
+    format=StorageFormat.CSV,
+    options={"header": "false", "delimiter": "|"},
+)
+
+# GeoJSON preserving null fields
+store = Store.for_download(
+    format=StorageFormat.GEOJSON,
+    options={"ignoreNullFields": "false"},
+)
+```
+
 ### Execution progress
 
 You can monitor the progress of running queries by registering a
