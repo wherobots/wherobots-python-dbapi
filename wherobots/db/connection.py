@@ -16,7 +16,7 @@ import websockets.sync.client
 from .constants import DEFAULT_READ_TIMEOUT_SECONDS
 from .cursor import Cursor
 from .errors import NotSupportedError, OperationalError
-from .models import ExecutionResult, Store, StoreResult
+from .models import ExecutionResult, ProgressInfo, Store, StoreResult
 from .types import (
     RequestKind,
     EventKind,
@@ -25,6 +25,10 @@ from .types import (
     DataCompression,
     GeometryRepresentation,
 )
+
+
+ProgressHandler = Callable[[ProgressInfo], None]
+"""A callable invoked with a :class:`ProgressInfo` on every progress event."""
 
 
 @dataclass
@@ -64,6 +68,7 @@ class Connection:
         self.__results_format = results_format
         self.__data_compression = data_compression
         self.__geometry_representation = geometry_representation
+        self.__progress_handler: ProgressHandler | None = None
 
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -88,6 +93,21 @@ class Connection:
 
     def cursor(self) -> Cursor:
         return Cursor(self.__execute_sql, self.__cancel_query)
+
+    def set_progress_handler(self, handler: ProgressHandler | None) -> None:
+        """Register a callback invoked for execution progress events.
+
+        When a handler is set, every ``execute_sql`` request automatically
+        includes ``enable_progress_events: true`` so the SQL session streams
+        progress updates for running queries.
+
+        Pass ``None`` to disable progress reporting.
+
+        This follows the `sqlite3 Connection.set_progress_handler()
+        <https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.set_progress_handler>`_
+        pattern (PEP 249 vendor extension).
+        """
+        self.__progress_handler = handler
 
     def __main_loop(self) -> None:
         """Main background loop listening for messages from the SQL session."""
@@ -114,6 +134,25 @@ class Connection:
         execution_id = message.get("execution_id")
         if not kind or not execution_id:
             # Invalid event.
+            return
+
+        # Progress events are independent of the query state machine and don't
+        # require a tracked query — the handler is connection-level.
+        if kind == EventKind.EXECUTION_PROGRESS:
+            handler = self.__progress_handler
+            if handler is None:
+                return
+            try:
+                handler(
+                    ProgressInfo(
+                        execution_id=execution_id,
+                        tasks_total=message.get("tasks_total", 0),
+                        tasks_completed=message.get("tasks_completed", 0),
+                        tasks_active=message.get("tasks_active", 0),
+                    )
+                )
+            except Exception:
+                logging.exception("Progress handler raised an exception")
             return
 
         query = self.__queries.get(execution_id)
@@ -235,6 +274,9 @@ class Connection:
             "execution_id": execution_id,
             "statement": sql,
         }
+
+        if self.__progress_handler is not None:
+            request["enable_progress_events"] = True
 
         if store:
             request["store"] = {

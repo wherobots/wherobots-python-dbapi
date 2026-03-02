@@ -10,7 +10,7 @@ from .errors import (
     ProgrammingError,
     NotSupportedError,
 )
-from .models import Store, StoreResult
+from .models import ProgressInfo, Store, StoreResult
 from .region import Region
 from .runtime import Runtime
 from .types import StorageFormat
@@ -18,6 +18,7 @@ from .types import StorageFormat
 __all__ = [
     "Connection",
     "Cursor",
+    "ProgressInfo",
     "connect",
     "connect_direct",
     "Error",

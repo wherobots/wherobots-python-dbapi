@@ -10,9 +10,9 @@ import pandas
 from rich.console import Console
 from rich.table import Table
 
-from wherobots.db import connect, connect_direct, errors
-from wherobots.db.constants import DEFAULT_ENDPOINT, DEFAULT_SESSION_TYPE
+from wherobots.db import connect, connect_direct, errors, ProgressInfo
 from wherobots.db.connection import Connection
+from wherobots.db.constants import DEFAULT_ENDPOINT, DEFAULT_SESSION_TYPE
 from wherobots.db.region import Region
 from wherobots.db.runtime import Runtime
 from wherobots.db.session_type import SessionType
@@ -53,6 +53,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--wide", help="Enable wide output", action="store_const", const=80, default=30
+    )
+    parser.add_argument(
+        "--progress",
+        help="Enable execution progress reporting",
+        action="store_true",
     )
     parser.add_argument("sql", nargs="+", help="SQL query to execute")
     args = parser.parse_args()
@@ -134,6 +139,26 @@ if __name__ == "__main__":
 
     try:
         with conn_func() as conn:
+            if args.progress:
+                console = Console(stderr=True)
+
+                def _on_progress(info: ProgressInfo) -> None:
+                    pct = (
+                        f"{info.tasks_completed / info.tasks_total * 100:.0f}%"
+                        if info.tasks_total
+                        else "?"
+                    )
+                    console.print(
+                        f"  [dim]\\[progress][/dim] "
+                        f"[bold]{pct}[/bold]  "
+                        f"{info.tasks_completed}/{info.tasks_total} tasks "
+                        f"[dim]({info.tasks_active} active)[/dim]  "
+                        f"[dim]{info.execution_id[:8]}[/dim]",
+                        highlight=False,
+                    )
+
+                conn.set_progress_handler(_on_progress)
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 futures = [pool.submit(execute, conn, s) for s in args.sql]
                 for future in concurrent.futures.as_completed(futures):
