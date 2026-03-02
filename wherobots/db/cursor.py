@@ -1,7 +1,8 @@
 import queue
-from typing import Any, Optional, List, Tuple, Dict
+from typing import Any, Optional, List, Tuple, Dict, Union
 
 from .errors import DatabaseError, ProgrammingError
+from .result_store import Store
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -15,9 +16,15 @@ _TYPE_MAP = {
 
 
 class Cursor:
-    def __init__(self, exec_fn, cancel_fn) -> None:
+    def __init__(
+        self,
+        exec_fn,
+        cancel_fn,
+        default_store: Union[Store, None] = None,
+    ) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
+        self.__default_store = default_store
 
         self.__queue: queue.Queue = queue.Queue()
         self.__results: Optional[list[Any]] = None
@@ -71,7 +78,12 @@ class Cursor:
 
         return self.__results
 
-    def execute(self, operation: str, parameters: Dict[str, Any] = None) -> None:
+    def execute(
+        self,
+        operation: str,
+        parameters: Dict[str, Any] = None,
+        store: Union[Store, None] = None,
+    ) -> None:
         if self.__current_execution_id:
             self.__cancel_fn(self.__current_execution_id)
 
@@ -83,7 +95,10 @@ class Cursor:
         sql = (
             operation.replace("{", "{{").replace("}", "}}").format(**(parameters or {}))
         )
-        self.__current_execution_id = self.__exec_fn(sql, self.__on_execution_result)
+        effective_store = store if store is not None else self.__default_store
+        self.__current_execution_id = self.__exec_fn(
+            sql, self.__on_execution_result, effective_store
+        )
 
     def executemany(
         self, operation: str, seq_of_parameters: List[Dict[str, Any]]

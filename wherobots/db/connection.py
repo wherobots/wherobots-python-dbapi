@@ -24,6 +24,7 @@ from wherobots.db.constants import (
 )
 from wherobots.db.cursor import Cursor
 from wherobots.db.errors import NotSupportedError, OperationalError
+from wherobots.db.result_store import Store
 
 
 @dataclass
@@ -56,12 +57,14 @@ class Connection:
         results_format: Union[ResultsFormat, None] = None,
         data_compression: Union[DataCompression, None] = None,
         geometry_representation: Union[GeometryRepresentation, None] = None,
+        store: Union[Store, None] = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout
         self.__results_format = results_format
         self.__data_compression = data_compression
         self.__geometry_representation = geometry_representation
+        self.__store = store
 
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -85,7 +88,7 @@ class Connection:
         raise NotSupportedError
 
     def cursor(self) -> Cursor:
-        return Cursor(self.__execute_sql, self.__cancel_query)
+        return Cursor(self.__execute_sql, self.__cancel_query, self.__store)
 
     def __main_loop(self) -> None:
         """Main background loop listening for messages from the SQL session."""
@@ -200,7 +203,12 @@ class Connection:
             raise ValueError("Unexpected frame type received")
         return message
 
-    def __execute_sql(self, sql: str, handler: Callable[[Any], None]) -> str:
+    def __execute_sql(
+        self,
+        sql: str,
+        handler: Callable[[Any], None],
+        store: Union[Store, None] = None,
+    ) -> str:
         """Triggers the execution of the given SQL query."""
         execution_id = str(uuid.uuid4())
         request = {
@@ -208,6 +216,9 @@ class Connection:
             "execution_id": execution_id,
             "statement": sql,
         }
+
+        if store is not None:
+            request["store"] = store.to_dict()
 
         self.__queries[execution_id] = Query(
             sql=sql,

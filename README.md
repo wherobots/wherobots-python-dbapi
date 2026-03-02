@@ -103,3 +103,63 @@ users may find useful:
     Consider multi-session for potential cost savings, but be mindful of
     performance impacts from shared resources. You might need to adjust
     cluster size if slowdowns occur, which could affect overall cost.
+
+### Storing results to cloud storage
+
+Instead of receiving query results inline over the WebSocket connection,
+you can have the server write them to cloud storage (S3) using the
+`Store` class. This is useful for large result sets or when you need a
+downloadable file.
+
+```python
+from wherobots.db import connect, Store, StorageFormat
+from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
+
+with connect(
+        api_key='...',
+        runtime=Runtime.TINY,
+        region=Region.AWS_US_WEST_2) as conn:
+    curr = conn.cursor()
+
+    # Store results as a single GeoJSON file with a presigned download URL
+    store = Store.for_download(format=StorageFormat.GEOJSON)
+    curr.execute("SELECT * FROM my_table", store=store)
+    results = curr.fetchall()
+```
+
+#### Store options
+
+You can pass format-specific Spark write options through the `options`
+parameter. These correspond to the options available in Spark's
+`DataFrameWriter` and are applied after the server's default options,
+allowing you to override them.
+
+```python
+# CSV without headers
+store = Store.for_download(
+    format=StorageFormat.CSV,
+    options={"header": "false", "delimiter": "|"},
+)
+
+# GeoJSON preserving null fields
+store = Store.for_download(
+    format=StorageFormat.GEOJSON,
+    options={"ignoreNullFields": "false"},
+)
+```
+
+You can also set a default `Store` at connection time, which will be
+used for all queries executed through cursors created from that
+connection unless overridden per-query:
+
+```python
+with connect(
+        api_key='...',
+        runtime=Runtime.TINY,
+        region=Region.AWS_US_WEST_2,
+        store=Store.for_download(format=StorageFormat.PARQUET)) as conn:
+    curr = conn.cursor()
+    # All queries through this cursor will use the connection-level store
+    curr.execute("SELECT * FROM my_table")
+```
