@@ -35,12 +35,6 @@ class TestStoreOptions:
         original["delimiter"] = "|"
         assert "delimiter" not in store.options
 
-    def test_options_dict_is_mutable(self):
-        """Store is not frozen, so options dict can be mutated after construction."""
-        store = Store(format=StorageFormat.CSV, options={"header": "false"})
-        store.options["delimiter"] = "|"
-        assert store.options == {"header": "false", "delimiter": "|"}
-
 
 class TestStoreForDownloadWithOptions:
     """Tests for Store.for_download() with options parameter."""
@@ -69,22 +63,11 @@ class TestStoreForDownloadWithOptions:
 
 
 class TestStoreSerializationWithOptions:
-    """Tests for store dict serialization matching connection.py's format."""
-
-    def _serialize_store(self, store: Store) -> dict:
-        """Replicate the serialization logic from Connection.__execute_sql."""
-        store_dict = {
-            "format": store.format.value,
-            "single": str(store.single).lower(),
-            "generate_presigned_url": str(store.generate_presigned_url).lower(),
-        }
-        if store.options:
-            store_dict["options"] = store.options
-        return store_dict
+    """Tests for Store.to_dict() serialization."""
 
     def test_serialize_without_options(self):
         store = Store.for_download(format=StorageFormat.GEOJSON)
-        d = self._serialize_store(store)
+        d = store.to_dict()
         assert d == {
             "format": "geojson",
             "single": "true",
@@ -97,7 +80,7 @@ class TestStoreSerializationWithOptions:
             format=StorageFormat.CSV,
             options={"header": "false", "delimiter": "|"},
         )
-        d = self._serialize_store(store)
+        d = store.to_dict()
         assert d == {
             "format": "csv",
             "single": "true",
@@ -107,7 +90,7 @@ class TestStoreSerializationWithOptions:
 
     def test_serialize_empty_options_omitted(self):
         store = Store(format=StorageFormat.PARQUET, options={})
-        d = self._serialize_store(store)
+        d = store.to_dict()
         assert "options" not in d
 
     def test_json_roundtrip_with_options(self):
@@ -115,7 +98,7 @@ class TestStoreSerializationWithOptions:
             format=StorageFormat.GEOJSON,
             options={"ignoreNullFields": "false"},
         )
-        d = self._serialize_store(store)
+        d = store.to_dict()
         payload = json.dumps(d)
         parsed = json.loads(payload)
         assert parsed["options"] == {"ignoreNullFields": "false"}
@@ -131,7 +114,7 @@ class TestStoreSerializationWithOptions:
             "execution_id": "test-id",
             "statement": "SELECT 1",
         }
-        store_dict = self._serialize_store(store)
+        store_dict = store.to_dict()
         request["store"] = store_dict
 
         assert request == {

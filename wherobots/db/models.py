@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any, Dict
 
 import pandas
 
@@ -75,6 +76,22 @@ class Store:
             generate_presigned_url=True,
             options=options,
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize this Store to a dict for the WebSocket request.
+
+        Returns a dict suitable for inclusion as the ``"store"`` field in an
+        ``execute_sql`` request.  The ``options`` key is omitted when there
+        are no user-supplied options (backward compatible).
+        """
+        d: Dict[str, Any] = {
+            "format": self.format.value,
+            "single": str(self.single).lower(),
+            "generate_presigned_url": str(self.generate_presigned_url).lower(),
+        }
+        if self.options:
+            d["options"] = self.options
+        return d
 
 
 @dataclass

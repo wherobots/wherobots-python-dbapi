@@ -279,14 +279,7 @@ class Connection:
             request["enable_progress_events"] = True
 
         if store:
-            store_dict: dict[str, Any] = {
-                "format": store.format.value,
-                "single": str(store.single).lower(),
-                "generate_presigned_url": str(store.generate_presigned_url).lower(),
-            }
-            if store.options:
-                store_dict["options"] = store.options
-            request["store"] = store_dict
+            request["store"] = store.to_dict()
 
         self.__queries[execution_id] = Query(
             sql=sql,
