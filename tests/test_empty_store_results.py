@@ -9,15 +9,11 @@ These tests verify that:
 
 import json
 import queue
-import threading
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from wherobots.db.connection import Connection, Query
-from wherobots.db.cursor import Cursor
-from wherobots.db.models import ExecutionResult, Store, StoreResult
-from wherobots.db.types import EventKind, ExecutionState, StorageFormat
+from wherobots.db.models import ExecutionResult, Store
+from wherobots.db.types import ExecutionState, StorageFormat
 
 
 class TestEmptyStoreResults:
