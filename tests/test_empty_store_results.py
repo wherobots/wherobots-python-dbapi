@@ -102,7 +102,10 @@ class TestEmptyStoreResults:
         assert result.results is None
         assert result.error is None
         assert result.store_result is not None
-        assert result.store_result.result_uri == "https://presigned-url.example.com/results.geojson"
+        assert (
+            result.store_result.result_uri
+            == "https://presigned-url.example.com/results.geojson"
+        )
         assert result.store_result.size == 12345
         assert query.state == ExecutionState.COMPLETED
 
