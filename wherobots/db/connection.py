@@ -192,6 +192,16 @@ class Connection:
                         query.handler(ExecutionResult(store_result=store_result))
                         return
 
+                    if query.store is not None:
+                        # Store was configured but produced no results (empty result set)
+                        logging.info(
+                            "Query %s completed with store configured but no results to store.",
+                            execution_id,
+                        )
+                        query.state = ExecutionState.COMPLETED
+                        query.handler(ExecutionResult())
+                        return
+
                     # No store configured, request results normally
                     self.__request_results(execution_id)
                     return
@@ -200,6 +210,8 @@ class Connection:
                 results = message.get("results")
                 if not results or not isinstance(results, dict):
                     logging.warning("Got no results back from %s.", execution_id)
+                    query.state = ExecutionState.COMPLETED
+                    query.handler(ExecutionResult())
                     return
 
                 query.state = ExecutionState.COMPLETED
