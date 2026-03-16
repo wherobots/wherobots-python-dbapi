@@ -4,6 +4,40 @@ Python DB-API implementation for Wherobots DB. This package implements a
 PEP-0249 compatible driver to programmatically connect to a Wherobots DB
 runtime and execute Spatial SQL queries.
 
+## PEP 249 DB-API 2.0 Compliance
+
+This driver implements the [PEP 249](https://peps.python.org/pep-0249/)
+Python Database API Specification v2.0 and exposes the following
+module-level globals:
+
+| Global | Value | Meaning |
+|---|---|---|
+| `apilevel` | `"2.0"` | Supports DB-API 2.0 |
+| `threadsafety` | `1` | Threads may share the module, but not connections |
+| `paramstyle` | `"pyformat"` | Uses `%(name)s` named parameter markers |
+
+### Parameterized queries
+
+Use `%(name)s` markers in your SQL and pass a dictionary of parameter
+values:
+
+```python
+curr.execute(
+    "SELECT * FROM places WHERE id = %(id)s AND category = %(cat)s",
+    parameters={"id": 42, "cat": "restaurant"},
+)
+```
+
+Literal `%` characters in SQL (e.g. `LIKE` wildcards) do not need
+escaping and work alongside parameters:
+
+```python
+curr.execute(
+    "SELECT * FROM places WHERE name LIKE '%coffee%' AND city = %(city)s",
+    parameters={"city": "Seattle"},
+)
+```
+
 ## Installation
 
 To add this library as a dependency in your Python project, use `uv add`

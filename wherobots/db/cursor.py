@@ -1,8 +1,35 @@
 import queue
+import re
 from typing import Any, List, Tuple, Dict
 
 from .errors import ProgrammingError
 from .models import ExecutionResult, Store, StoreResult
+
+# Matches pyformat parameter markers: %(name)s
+_PYFORMAT_RE = re.compile(r"%\(([^)]+)\)s")
+
+
+def _substitute_parameters(
+    operation: str, parameters: Dict[str, Any] | None
+) -> str:
+    """Substitute pyformat parameters into a SQL operation string.
+
+    Uses regex to match only %(name)s tokens, leaving literal percent
+    characters (e.g. SQL LIKE wildcards) untouched.
+    """
+    if not parameters:
+        return operation
+
+    def replacer(match: re.Match) -> str:
+        key = match.group(1)
+        if key not in parameters:
+            raise ProgrammingError(
+                f"Parameter '{key}' not found in provided parameters"
+            )
+        return str(parameters[key])
+
+    return _PYFORMAT_RE.sub(replacer, operation)
+
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -99,7 +126,9 @@ class Cursor:
         self.__description = None
 
         self.__current_execution_id = self.__exec_fn(
-            operation % (parameters or {}), self.__on_execution_result, store
+            _substitute_parameters(operation, parameters),
+            self.__on_execution_result,
+            store,
         )
 
     def get_store_result(self) -> StoreResult | None:
