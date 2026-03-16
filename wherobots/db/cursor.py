@@ -9,9 +9,7 @@ from .models import ExecutionResult, Store, StoreResult
 _PYFORMAT_RE = re.compile(r"%\(([^)]+)\)s")
 
 
-def _substitute_parameters(
-    operation: str, parameters: Dict[str, Any] | None
-) -> str:
+def _substitute_parameters(operation: str, parameters: Dict[str, Any] | None) -> str:
     """Substitute pyformat parameters into a SQL operation string.
 
     Uses regex to match only %(name)s tokens, leaving literal percent
