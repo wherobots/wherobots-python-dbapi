@@ -78,6 +78,18 @@ class TestQuoteValue:
 
         assert _quote_value(date(2024, 1, 15)) == "'2024-01-15'"
 
+    def test_nan_raises(self):
+        with pytest.raises(ProgrammingError, match="Cannot convert float"):
+            _quote_value(float("nan"))
+
+    def test_inf_raises(self):
+        with pytest.raises(ProgrammingError, match="Cannot convert float"):
+            _quote_value(float("inf"))
+
+    def test_negative_inf_raises(self):
+        with pytest.raises(ProgrammingError, match="Cannot convert float"):
+            _quote_value(float("-inf"))
+
 
 # ---------------------------------------------------------------------------
 # cursor.execute() end-to-end tests

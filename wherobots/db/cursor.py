@@ -1,3 +1,4 @@
+import math
 import queue
 import re
 from typing import Any, List, Tuple, Dict
@@ -21,6 +22,10 @@ def _quote_value(value: Any) -> str:
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            raise ProgrammingError(
+                f"Cannot convert float value {value!r} to SQL literal"
+            )
         return str(value)
     if isinstance(value, bytes):
         return "X'" + value.hex() + "'"
