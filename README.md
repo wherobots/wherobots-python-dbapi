@@ -19,13 +19,17 @@ module-level globals:
 ### Parameterized queries
 
 Use `%(name)s` markers in your SQL and pass a dictionary of parameter
-values:
+values. The driver automatically quotes and escapes values based on
+their Python type (strings are single-quoted, `None` becomes `NULL`,
+booleans become `TRUE`/`FALSE`, and numeric types are passed through
+unquoted):
 
 ```python
 curr.execute(
     "SELECT * FROM places WHERE id = %(id)s AND category = %(cat)s",
     parameters={"id": 42, "cat": "restaurant"},
 )
+# Produces: ... WHERE id = 42 AND category = 'restaurant'
 ```
 
 Literal `%` characters in SQL (e.g. `LIKE` wildcards) do not need
