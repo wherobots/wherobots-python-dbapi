@@ -8,6 +8,8 @@ These tests verify that:
 3. Unknown parameter keys raise ProgrammingError.
 """
 
+from datetime import date
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -74,8 +76,6 @@ class TestQuoteValue:
 
     def test_non_primitive_uses_str(self):
         """Non-primitive types fall through to str() and get quoted as strings."""
-        from datetime import date
-
         assert _quote_value(date(2024, 1, 15)) == "'2024-01-15'"
 
     def test_nan_raises(self):
