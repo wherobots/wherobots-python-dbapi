@@ -1,8 +1,59 @@
+import math
 import queue
+import re
 from typing import Any, List, Tuple, Dict
 
 from .errors import ProgrammingError
 from .models import ExecutionResult, Store, StoreResult
+
+# Matches pyformat parameter markers: %(name)s
+_PYFORMAT_RE = re.compile(r"%\(([^)]+)\)s")
+
+
+def _quote_value(value: Any) -> str:
+    """Convert a Python value to a SQL literal string.
+
+    Handles quoting and escaping so that the interpolated SQL is syntactically
+    correct and safe from trivial injection.
+    """
+    if value is None:
+        return "NULL"
+    # bool must be checked before int because bool is a subclass of int
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            raise ProgrammingError(
+                f"Cannot convert float value {value!r} to SQL literal"
+            )
+        return str(value)
+    if isinstance(value, bytes):
+        return "X'" + value.hex() + "'"
+    # Everything else (str, date, datetime, etc.) is treated as a string literal
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _substitute_parameters(operation: str, parameters: Dict[str, Any] | None) -> str:
+    """Substitute pyformat parameters into a SQL operation string.
+
+    Uses regex to match only %(name)s tokens, leaving literal percent
+    characters (e.g. SQL LIKE wildcards) untouched.  Values are quoted
+    according to their Python type so the resulting SQL is syntactically
+    correct (see :func:`_quote_value`).
+    """
+    if not parameters:
+        return operation
+
+    def replacer(match: re.Match) -> str:
+        key = match.group(1)
+        if key not in parameters:
+            raise ProgrammingError(
+                f"Parameter '{key}' not found in provided parameters"
+            )
+        return _quote_value(parameters[key])
+
+    return _PYFORMAT_RE.sub(replacer, operation)
+
 
 _TYPE_MAP = {
     "object": "STRING",
@@ -99,7 +150,9 @@ class Cursor:
         self.__description = None
 
         self.__current_execution_id = self.__exec_fn(
-            operation % (parameters or {}), self.__on_execution_result, store
+            _substitute_parameters(operation, parameters),
+            self.__on_execution_result,
+            store,
         )
 
     def get_store_result(self) -> StoreResult | None:
