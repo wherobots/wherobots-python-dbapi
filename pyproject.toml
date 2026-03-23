@@ -1,6 +1,6 @@
 [project]
 name = "wherobots-python-dbapi"
-version = "0.25.3"
+version = "0.25.4"
 description = "Python DB-API driver for Wherobots DB"
 authors = [{ name = "Maxime Petazzoni", email = "max@wherobots.com" }]
 requires-python = ">=3.10, <4"
@@ -15,7 +15,7 @@ dependencies = [
     "StrEnum>=0.4.15,<0.5",
     "pyarrow>=14.0.2",
     "pandas",
-    "types-requests>=2.32.0.20241016",
+    "types-requests>=2.31.0",
     "pandas-stubs>=2.0.3.230814",
 ]
 
