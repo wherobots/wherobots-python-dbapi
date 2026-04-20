@@ -13,6 +13,7 @@ import requests
 import tenacity
 from typing import Final, Union, Dict
 import urllib.parse
+import websockets.exceptions
 import websockets.sync.client
 import certifi
 
@@ -200,17 +201,33 @@ def connect_direct(
     geometry_representation: Union[GeometryRepresentation, None] = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
+    ssl_context = ssl.create_default_context()
+    ssl_context.load_verify_locations(certifi.where())
 
-    try:
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=5),
+        retry=tenacity.retry_if_exception_type(
+            (
+                ConnectionRefusedError,
+                ConnectionResetError,
+                TimeoutError,
+                websockets.exceptions.InvalidHandshake,
+            )
+        ),
+        reraise=True,
+    )
+    def ws_connect() -> websockets.sync.client.ClientConnection:
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-        ssl_context = ssl.create_default_context()
-        ssl_context.load_verify_locations(certifi.where())
-        ws = websockets.sync.client.connect(
+        return websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
             ssl=ssl_context,
         )
+
+    try:
+        ws = ws_connect()
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
 
