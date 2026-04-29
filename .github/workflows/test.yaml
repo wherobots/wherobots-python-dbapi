@@ -38,6 +38,9 @@ jobs:
           cd tests
           python -c "import wherobots.db"
 
+      - name: Run tests
+        run: pytest tests/
+
       - name: Check build
         run: |
           uv build

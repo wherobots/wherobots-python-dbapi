@@ -261,3 +261,9 @@ users may find useful:
     your expected time between queries and effectively get a continuously
     running SQL session runtime without any complex connection management
     in your application.
+* `cancel_event`: a `threading.Event` that, when set, causes the
+    connection attempt to abort promptly with an `InterfaceError`. This
+    is useful when `connect()` is running in a background thread and the
+    caller needs to interrupt it (e.g. on client disconnect or timeout).
+    The event is checked before each HTTP request, between retry
+    attempts, and before the WebSocket handshake.
