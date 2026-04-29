@@ -11,6 +11,7 @@ from packaging.version import Version
 import platform
 import requests
 import tenacity
+import threading
 from typing import Final, Union, Dict
 import urllib.parse
 import websockets.exceptions
@@ -51,6 +52,9 @@ paramstyle: Final[str] = PARAM_STYLE
 # This follows the industry-standard set used by urllib3.util.Retry's status_forcelist.
 TRANSIENT_HTTP_STATUS_CODES = {429, 502, 503, 504}
 
+# Default timeout for individual HTTP requests (connect + read), in seconds.
+DEFAULT_HTTP_TIMEOUT = 30
+
 
 def gen_user_agent_header():
     try:
@@ -79,6 +83,7 @@ def connect(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    cancel_event: Union[threading.Event, None] = None,
 ) -> Connection:
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -109,6 +114,8 @@ def connect(
     if not host.startswith("http:"):
         host = f"https://{host}"
 
+    _check_cancelled(cancel_event)
+
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
@@ -120,6 +127,7 @@ def connect(
                 "sessionType": session_type.value,
             },
             headers=headers,
+            timeout=DEFAULT_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
     except requests.HTTPError as e:
@@ -149,10 +157,12 @@ def connect(
             )
             | tenacity.retry_if_exception_type(tenacity.TryAgain)
         ),
+        before_sleep=lambda _: _check_cancelled(cancel_event),
         reraise=True,
     )
     def get_session_uri() -> str:
-        r = requests.get(session_id_url, headers=headers)
+        _check_cancelled(cancel_event)
+        r = requests.get(session_id_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
         r.raise_for_status()
         payload = r.json()
         status = AppStatus(payload.get("status"))
@@ -169,6 +179,8 @@ def connect(
         logging.info("Getting SQL session status from %s ...", session_id_url)
         session_uri = get_session_uri()
         logging.debug("SQL session URI from app status: %s", session_uri)
+    except InterfaceError:
+        raise
     except Exception as e:
         raise InterfaceError("Could not acquire SQL session!", e)
 
@@ -179,7 +191,14 @@ def connect(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        cancel_event=cancel_event,
     )
+
+
+def _check_cancelled(cancel_event: Union[threading.Event, None]) -> None:
+    """Raise InterfaceError if the cancel event is set."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise InterfaceError("Connection cancelled by caller")
 
 
 def http_to_ws(uri: str) -> str:
@@ -199,6 +218,7 @@ def connect_direct(
     results_format: Union[ResultsFormat, None] = None,
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
+    cancel_event: Union[threading.Event, None] = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -215,19 +235,24 @@ def connect_direct(
                 websockets.exceptions.InvalidHandshake,
             )
         ),
+        before_sleep=lambda _: _check_cancelled(cancel_event),
         reraise=True,
     )
     def ws_connect() -> websockets.sync.client.ClientConnection:
+        _check_cancelled(cancel_event)
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
         return websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
+            open_timeout=DEFAULT_HTTP_TIMEOUT,
             ssl=ssl_context,
         )
 
     try:
         ws = ws_connect()
+    except InterfaceError:
+        raise
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
 
