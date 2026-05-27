@@ -21,8 +21,6 @@ import certifi
 from .connection import Connection
 from .constants import (
     DEFAULT_ENDPOINT,
-    DEFAULT_REGION,
-    DEFAULT_RUNTIME,
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
@@ -72,8 +70,8 @@ def connect(
     host: str = DEFAULT_ENDPOINT,
     token: Union[str, None] = None,
     api_key: Union[str, None] = None,
-    runtime: Union[Runtime, None] = None,
-    region: Union[Region, None] = None,
+    runtime: Union[str, Runtime, None] = None,
+    region: Union[str, Region, None] = None,
     version: Union[str, None] = None,
     wait_timeout: float = DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     read_timeout: float = DEFAULT_READ_TIMEOUT_SECONDS,
@@ -85,6 +83,20 @@ def connect(
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
 ) -> Connection:
+    """Create a connection to a Wherobots SQL session.
+
+    :param runtime: The compute runtime to use. Accepts a ``Runtime`` enum value
+        or a raw string; strings are passed to the API as-is. Override the
+        default runtime set for your organization — only set this if you need a
+        specific runtime instead of the one your administrator has configured.
+        When omitted, your organization's default runtime is used.
+    :param region: The compute region to run in. Accepts a ``Region`` enum value
+        or a raw string (e.g. a BYOC region such as ``byoc-acme-us-east-1``);
+        strings are passed to the API as-is. Override the default region set for
+        your organization — only set this if you intend to use a specific region
+        instead of the one your administrator has configured. When omitted, your
+        organization's default region is used.
+    """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
     if token and api_key:
@@ -97,16 +109,20 @@ def connect(
         headers["X-API-Key"] = api_key
 
     host = host or DEFAULT_ENDPOINT
-    runtime = runtime or DEFAULT_RUNTIME
-    region = region or DEFAULT_REGION
     session_type = session_type or DEFAULT_SESSION_TYPE
+
+    # Normalize enum values to their string form and pass raw strings through
+    # untouched. When omitted (None) the field is dropped from the request so
+    # the API applies the organization's configured default.
+    runtime_id = runtime.value if isinstance(runtime, Runtime) else runtime
+    region_name = region.value if isinstance(region, Region) else region
 
     logging.info(
         "Requesting %s%s runtime %sin %s from %s ...",
         "new " if force_new else "",
-        runtime.value,
+        runtime_id or "org-default",
         f"running {version} " if version else "",
-        region.value,
+        region_name or "org-default",
         host,
     )
 
@@ -119,9 +135,11 @@ def connect(
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
-            params={"region": region.value, "force_new": force_new},
+            # `requests` omits query params whose value is None, so an omitted
+            # region is simply not sent and the API applies the org default.
+            params={"region": region_name, "force_new": force_new},
             json={
-                "runtimeId": runtime.value,
+                "runtimeId": runtime_id,
                 "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
                 "version": version,
                 "sessionType": session_type.value,

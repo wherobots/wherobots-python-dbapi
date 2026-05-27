@@ -83,6 +83,16 @@ with connect(
     print(results)
 ```
 
+`runtime` and `region` are optional and accept either the provided enums (handy
+for autocomplete) or a plain string — strings are passed to the API as-is, so
+new or BYOC regions (e.g. `region="byoc-acme-us-east-1"`) work without an SDK
+upgrade. When omitted, your organization's configured defaults are used:
+
+```python
+with connect(api_key='...') as conn:  # uses your org's default runtime + region
+    ...
+```
+
 The `Cursor` supports the context manager protocol, so you can use it
 within a `with` statement when needed:
 
