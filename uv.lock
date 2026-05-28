@@ -1147,7 +1147,7 @@ wheels = [
 
 [[package]]
 name = "wherobots-python-dbapi"
-version = "0.25.3"
+version = "0.28.0"
 source = { editable = "." }
 dependencies = [
     { name = "cbor2" },
@@ -1187,10 +1187,10 @@ requires-dist = [
     { name = "pandas-stubs", specifier = ">=2.0.3.230814" },
     { name = "pyarrow", specifier = ">=14.0.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.2" },
-    { name = "requests", specifier = ">=2.32.3" },
+    { name = "requests", specifier = ">=2.31.0" },
     { name = "strenum", specifier = ">=0.4.15,<0.5" },
     { name = "tenacity", specifier = ">=8.2.3" },
-    { name = "types-requests", specifier = ">=2.32.0.20241016" },
+    { name = "types-requests", specifier = ">=2.31.0" },
     { name = "websockets", specifier = ">=13.0" },
 ]
 provides-extras = ["test"]
