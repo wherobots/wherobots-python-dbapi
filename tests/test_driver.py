@@ -14,6 +14,66 @@ from wherobots.db.driver import (
     connect_direct,
 )
 from wherobots.db.errors import InterfaceError
+from wherobots.db.region import Region
+from wherobots.db.runtime import Runtime
+
+
+def _run_connect(mock_post, mock_get, **connect_kwargs):
+    """Drive a successful connect() and return the kwargs passed to requests.post."""
+    post_resp = MagicMock()
+    post_resp.status_code = 200
+    post_resp.url = "https://api.example.com/sql/session/test-id"
+    post_resp.raise_for_status = MagicMock()
+    mock_post.return_value = post_resp
+
+    get_resp = MagicMock()
+    get_resp.status_code = 200
+    get_resp.raise_for_status = MagicMock()
+    get_resp.json.return_value = {
+        "status": "READY",
+        "appMeta": {"url": "https://compute.example.com/sql/org/session-id"},
+    }
+    mock_get.return_value = get_resp
+
+    with patch("wherobots.db.driver.connect_direct") as mock_cd:
+        mock_cd.return_value = MagicMock()
+        connect(api_key="test-key", **connect_kwargs)
+
+    _, kwargs = mock_post.call_args
+    return kwargs
+
+
+class TestConnectRegionRuntime:
+    """region/runtime accept enum|str and are omitted when not provided."""
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_omitted_region_runtime_not_sent(self, mock_post, mock_get):
+        """Omitting region/runtime sends no value so the API applies the org default."""
+        kwargs = _run_connect(mock_post, mock_get)
+        # `requests` drops query params that are None, so region is not sent.
+        assert kwargs["params"]["region"] is None
+        assert kwargs["json"]["runtimeId"] is None
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_enum_region_runtime_serialized(self, mock_post, mock_get):
+        """Enum values serialize to their string form."""
+        kwargs = _run_connect(
+            mock_post, mock_get, region=Region.AWS_US_WEST_2, runtime=Runtime.TINY
+        )
+        assert kwargs["params"]["region"] == "aws-us-west-2"
+        assert kwargs["json"]["runtimeId"] == "tiny"
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_string_region_runtime_passthrough(self, mock_post, mock_get):
+        """Raw strings (e.g. BYOC regions) are passed through untouched."""
+        kwargs = _run_connect(
+            mock_post, mock_get, region="byoc-acme-us-east-1", runtime="x-large"
+        )
+        assert kwargs["params"]["region"] == "byoc-acme-us-east-1"
+        assert kwargs["json"]["runtimeId"] == "x-large"
 
 
 class TestCheckCancelled:
