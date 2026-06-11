@@ -1,10 +1,11 @@
 import json
 import logging
-import textwrap
 import threading
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
+
+from wherobots.db.redaction import get_statement_type, redact_sql
 
 import pandas
 import pyarrow
@@ -260,8 +261,21 @@ class Connection:
 
     def __send(self, message: Dict[str, Any]) -> None:
         request = json.dumps(message)
-        logging.debug("Request: %s", request)
+        logging.debug("Request: %s", self.__redacted_request(message))
         self.__ws.send(request)
+
+    @staticmethod
+    def __redacted_request(message: Dict[str, Any]) -> str:
+        """Serialize a request for logging with any SQL statement redacted.
+
+        The wire payload (sent verbatim by ``__send``) carries the raw
+        ``statement``; this driver is embedded by other services, so logging it
+        -- even at DEBUG -- would leak raw SQL into their log streams (WBC-139).
+        """
+        statement = message.get("statement")
+        if isinstance(statement, str):
+            message = {**message, "statement": redact_sql(statement)}
+        return json.dumps(message)
 
     def __recv(self) -> Dict[str, Any]:
         frame = self.__ws.recv(timeout=self.__read_timeout)
@@ -301,8 +315,13 @@ class Connection:
             store=store,
         )
 
+        # Redact literal values before logging: this driver is embedded by other
+        # services, so raw SQL here would leak into their log streams (WBC-139).
         logging.info(
-            "Executing SQL query %s: %s", execution_id, textwrap.shorten(sql, width=60)
+            "Executing SQL query %s (%s): %s",
+            execution_id,
+            get_statement_type(sql),
+            redact_sql(sql),
         )
         self.__send(request)
         return execution_id
