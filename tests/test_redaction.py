@@ -78,6 +78,19 @@ def test_unterminated_string_does_not_leak() -> None:
     assert redacted == "SELECT * FROM t WHERE x = ?"
 
 
+def test_unterminated_quote_does_not_leak_later_statements() -> None:
+    # Multi-statement input where the FIRST statement contains an unterminated
+    # quote (a lone ``"`` opener, which sqlparse emits as an Error token) and a
+    # LATER statement contains a secret literal. Redaction must fail closed and
+    # bail on the entire input, never appending a later statement verbatim --
+    # otherwise the secret would leak into the logs. (sqlparse splits this into
+    # two statements, so this exercises the cross-statement path specifically.)
+    statement = "SELECT \" FROM t; SELECT v FROM creds WHERE token = 'topsecret123'"
+    redacted = redact_sql(statement)
+    assert "topsecret123" not in redacted
+    assert redacted == "SELECT ?"
+
+
 def test_multiple_literals_mixed() -> None:
     statement = "INSERT INTO t (a, b) VALUES ('x', 10), ('y', 20)"
     assert redact_sql(statement) == "INSERT INTO t (a, b) VALUES (?, ?), (?, ?)"

@@ -66,10 +66,13 @@ def redact_sql(statement: str) -> str:
             elif ttype in T.Error and token.value in ("'", '"', "`"):
                 # An unterminated quote: sqlparse emits the lone opener as an
                 # Error token and tokenizes the trailing characters as ordinary
-                # text. Redact the opener and drop the remainder of this
-                # statement so the unterminated value cannot leak.
+                # text. Redact the opener and fail closed by bailing on the
+                # entire input -- returning here (rather than ``break``, which
+                # only exits the inner loop) ensures that for multi-statement
+                # input no later statement is appended verbatim, which would
+                # leak the literals this function exists to hide.
                 out.append(REDACTED_PLACEHOLDER)
-                break
+                return "".join(out)
             else:
                 out.append(token.value)
     return "".join(out)
