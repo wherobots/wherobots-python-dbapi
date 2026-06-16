@@ -1,5 +1,6 @@
 import json
 import logging
+import textwrap
 import threading
 import uuid
 from dataclasses import dataclass
@@ -261,7 +262,11 @@ class Connection:
 
     def __send(self, message: Dict[str, Any]) -> None:
         request = json.dumps(message)
-        logging.debug("Request: %s", self.__redacted_request(message))
+        # Only compute the redacted request (json.dumps + sqlparse parse) when
+        # DEBUG is actually enabled; the log argument is evaluated eagerly, so an
+        # unguarded call would redact on every request even with DEBUG off.
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug("Request: %s", self.__redacted_request(message))
         self.__ws.send(request)
 
     @staticmethod
@@ -321,7 +326,7 @@ class Connection:
             "Executing SQL query %s (%s): %s",
             execution_id,
             get_statement_type(sql),
-            redact_sql(sql),
+            textwrap.shorten(redact_sql(sql), width=200),
         )
         self.__send(request)
         return execution_id

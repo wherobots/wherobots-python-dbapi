@@ -91,6 +91,39 @@ def test_unterminated_quote_does_not_leak_later_statements() -> None:
     assert redacted == "SELECT ?"
 
 
+@pytest.mark.parametrize(
+    ("statement", "expected", "secret"),
+    [
+        # Hex/blob literal: sqlparse classifies the quoted body as String.Single,
+        # so the value collapses to ? (the bare X prefix is a Name and is kept).
+        (
+            "SELECT * FROM t WHERE b = X'deadbeef'",
+            "SELECT * FROM t WHERE b = X?",
+            "deadbeef",
+        ),
+        # Unicode string literal (U&'...'): the quoted body is String.Single.
+        (
+            r"SELECT * FROM t WHERE s = U&'\0041'",
+            "SELECT * FROM t WHERE s = U&?",
+            "0041",
+        ),
+        # National-character / symbol-prefixed literal (N'...'): String.Single.
+        ("SELECT * FROM t WHERE s = N'abc'", "SELECT * FROM t WHERE s = N?", "abc"),
+    ],
+)
+def test_prefixed_string_literals_redacted(
+    statement: str, expected: str, secret: str
+) -> None:
+    # Hex (X'..'), unicode (U&'..') and symbol-prefixed (N'..') string literals
+    # all tokenize their value-bearing quoted body as String.Single, so the
+    # existing guard already redacts them -- no broadening to ``T.String`` is
+    # needed (and broadening would be harmful: double-quoted identifiers are
+    # String.Symbol, see test_double_quoted_identifier_left_intact).
+    redacted = redact_sql(statement)
+    assert secret not in redacted
+    assert redacted == expected
+
+
 def test_multiple_literals_mixed() -> None:
     statement = "INSERT INTO t (a, b) VALUES ('x', 10), ('y', 20)"
     assert redact_sql(statement) == "INSERT INTO t (a, b) VALUES (?, ?), (?, ?)"
