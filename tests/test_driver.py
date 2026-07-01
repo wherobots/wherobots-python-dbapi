@@ -299,6 +299,52 @@ class TestWherobotsClientHeader:
 
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
+    def test_extra_headers_cannot_spoof_api_key(self, mock_post, mock_get):
+        """A hostile X-API-Key in extra_headers cannot override the real api_key.
+
+        Auth headers are applied *after* extra_headers is merged, so the real
+        credential always wins. This is the security invariant: the advisory
+        header path can never be used to inject or swap credentials.
+        """
+        # _run_connect passes api_key="test-key"; try to spoof it via extra_headers.
+        post_kwargs = _run_connect(
+            mock_post,
+            mock_get,
+            extra_headers={"X-API-Key": "evil-key"},
+        )
+        assert post_kwargs["headers"]["X-API-Key"] == "test-key"
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_extra_headers_cannot_spoof_bearer_token(self, mock_post, mock_get):
+        """A hostile Authorization in extra_headers cannot override the real token."""
+        post_resp = MagicMock()
+        post_resp.status_code = 200
+        post_resp.url = "https://api.example.com/sql/session/test-id"
+        post_resp.raise_for_status = MagicMock()
+        mock_post.return_value = post_resp
+
+        get_resp = MagicMock()
+        get_resp.status_code = 200
+        get_resp.raise_for_status = MagicMock()
+        get_resp.json.return_value = {
+            "status": "READY",
+            "appMeta": {"url": "https://compute.example.com/sql/org/session-id"},
+        }
+        mock_get.return_value = get_resp
+
+        with patch("wherobots.db.driver.connect_direct") as mock_cd:
+            mock_cd.return_value = MagicMock()
+            connect(
+                token="real-token",
+                extra_headers={"Authorization": "Bearer evil-token"},
+            )
+
+        _, post_kwargs = mock_post.call_args
+        assert post_kwargs["headers"]["Authorization"] == "Bearer real-token"
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
     def test_ws_upgrade_carries_appended_header(self, mock_post, mock_get):
         """The appended X-Wherobots-Client also flows to the WebSocket upgrade path."""
         inbound = "client=claude_web, client=mcp;ver=0.9"

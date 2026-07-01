@@ -54,20 +54,24 @@ TRANSIENT_HTTP_STATUS_CODES = {429, 502, 503, 504}
 DEFAULT_HTTP_TIMEOUT = 30
 
 
-def _dbapi_version() -> str:
-    """Return this package's version, or "unknown" if it can't be resolved."""
+def _resolve_dbapi_version() -> str:
+    """Resolve this package's version, or "unknown" if it can't be found."""
     try:
         return metadata.version("wherobots-python-dbapi")
     except PackageNotFoundError:
         return "unknown"
 
 
+# Resolved once at import: `importlib.metadata.version` scans the installed
+# package database on each call, and the version can't change within a process.
+_DBAPI_VERSION: Final[str] = _resolve_dbapi_version()
+
+
 def gen_user_agent_header():
-    package_version = _dbapi_version()
     python_version = platform.python_version()
     system = platform.system().lower()
     return {
-        "User-Agent": f"wherobots-python-dbapi/{package_version} os/{system} python/{python_version}"
+        "User-Agent": f"wherobots-python-dbapi/{_DBAPI_VERSION} os/{system} python/{python_version}"
     }
 
 
@@ -89,7 +93,7 @@ def _append_wherobots_client_hop(headers: Dict[str, str]) -> None:
     This header is advisory: it is informational only and must never affect
     authentication. ``headers`` is mutated in place.
     """
-    dbapi_hop = f"client=dbapi;ver={_dbapi_version()}"
+    dbapi_hop = f"client=dbapi;ver={_DBAPI_VERSION}"
 
     # Find any existing hop chain case-insensitively and remove differently
     # cased duplicates so we don't emit two headers.
