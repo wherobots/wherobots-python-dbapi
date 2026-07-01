@@ -54,16 +54,53 @@ TRANSIENT_HTTP_STATUS_CODES = {429, 502, 503, 504}
 DEFAULT_HTTP_TIMEOUT = 30
 
 
-def gen_user_agent_header():
+def _dbapi_version() -> str:
+    """Return this package's version, or "unknown" if it can't be resolved."""
     try:
-        package_version = metadata.version("wherobots-python-dbapi")
+        return metadata.version("wherobots-python-dbapi")
     except PackageNotFoundError:
-        package_version = "unknown"
+        return "unknown"
+
+
+def gen_user_agent_header():
+    package_version = _dbapi_version()
     python_version = platform.python_version()
     system = platform.system().lower()
     return {
         "User-Agent": f"wherobots-python-dbapi/{package_version} os/{system} python/{python_version}"
     }
+
+
+# Canonical name of the shared, cross-service client-chain header.
+WHEROBOTS_CLIENT_HEADER: Final[str] = "X-Wherobots-Client"
+
+
+def _append_wherobots_client_hop(headers: Dict[str, str]) -> None:
+    """Append this driver's hop to the shared ``X-Wherobots-Client`` header.
+
+    ``X-Wherobots-Client`` is an ordered, append-only, comma-separated list of
+    hops; the leftmost is the origin and each component appends its own hop on
+    the right. DBAPI's hop is ``client=dbapi;ver=<version>``.
+
+    The lookup is case-insensitive because HTTP header names are, and any
+    differently-cased inbound key is collapsed into the canonical
+    ``X-Wherobots-Client`` key so the request carries exactly one such header.
+
+    This header is advisory: it is informational only and must never affect
+    authentication. ``headers`` is mutated in place.
+    """
+    dbapi_hop = f"client=dbapi;ver={_dbapi_version()}"
+
+    # Find any existing hop chain case-insensitively and remove differently
+    # cased duplicates so we don't emit two headers.
+    existing_chain: Union[str, None] = None
+    for key in [k for k in headers if k.lower() == WHEROBOTS_CLIENT_HEADER.lower()]:
+        existing_chain = headers.pop(key)
+
+    if existing_chain:
+        headers[WHEROBOTS_CLIENT_HEADER] = f"{existing_chain}, {dbapi_hop}"
+    else:
+        headers[WHEROBOTS_CLIENT_HEADER] = dbapi_hop
 
 
 def connect(
@@ -82,6 +119,7 @@ def connect(
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
+    extra_headers: Union[Dict[str, str], None] = None,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -96,6 +134,13 @@ def connect(
         your organization — only set this if you intend to use a specific region
         instead of the one your administrator has configured. When omitted, your
         organization's default region is used.
+    :param extra_headers: Optional extra HTTP headers to send on the session
+        requests and the WebSocket upgrade. Merged after the driver's own
+        headers, so callers can pass through tracing/correlation headers. If it
+        includes an ``X-Wherobots-Client`` hop chain, this driver appends its
+        own ``client=dbapi;ver=<version>`` hop to the right of it. This header
+        is advisory only and never affects authentication; ``extra_headers``
+        cannot be used to override the ``Authorization``/``X-API-Key`` headers.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -103,10 +148,18 @@ def connect(
         raise ValueError("`token` and `api_key` can't be both provided")
 
     headers = gen_user_agent_header()
+    # Merge caller-supplied headers first so the driver's own auth headers,
+    # applied below, always win and can never be overridden.
+    if extra_headers:
+        headers.update(extra_headers)
     if token:
         headers["Authorization"] = f"Bearer {token}"
     elif api_key:
         headers["X-API-Key"] = api_key
+
+    # Append this driver's hop to the shared client-chain header. Done after the
+    # auth headers are set so it operates on the final, merged header set.
+    _append_wherobots_client_hop(headers)
 
     host = host or DEFAULT_ENDPOINT
     session_type = session_type or DEFAULT_SESSION_TYPE
