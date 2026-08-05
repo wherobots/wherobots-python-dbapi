@@ -17,8 +17,13 @@ import pytest
 from unittest.mock import MagicMock
 
 from wherobots.db.cursor import Cursor, _substitute_parameters, _quote_value
-from wherobots.db.errors import ProgrammingError
-from wherobots.db.models import ExecutionResult
+from wherobots.db.errors import OperationalError, ProgrammingError
+from wherobots.db.models import (
+    ExecutionResult,
+    StorageFormat,
+    Store,
+    StoreResult,
+)
 
 
 def _make_cursor():
@@ -274,6 +279,31 @@ class TestCursorResultIsolation:
         assert cursor.fetchall()["x"].tolist() == [1]
         assert cursor.fetchall()["x"].tolist() == [1]
 
+    def test_get_store_result_is_idempotent(self):
+        """A second get_store_result() must not block on the drained queue."""
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT 1", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+
+    def test_fetch_after_error_reraises(self):
+        """Repeated fetches of a failed execution re-raise its error instead
+        of blocking on the drained queue."""
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT broken")
+        handlers[0](ExecutionResult(error=OperationalError("boom")))
+
+        with pytest.raises(OperationalError, match="boom"):
+            cursor.fetchall()
+        with pytest.raises(OperationalError, match="boom"):
+            cursor.fetchall()
+
 
 class TestCursorCancellation:
     """Only genuinely in-flight executions may be cancelled."""
@@ -319,6 +349,61 @@ class TestCursorCancellation:
         cursor, _, cancel_fn = _make_async_cursor()
 
         cursor.close()
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_completed_store_query(self):
+        """Store-backed executions never populate __results; completion must
+        still be recognized so they aren't cancelled (WBC-922 review)."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT * FROM t", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+
+        cursor.execute("SELECT 1")
+
+        cancel_fn.assert_not_called()
+
+    def test_close_does_not_cancel_completed_store_query(self):
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT * FROM t", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+        cursor.get_store_result()
+        cursor.close()
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_completed_empty_result_query(self):
+        """An execution that completes with neither rows nor a store result
+        (e.g. store configured but empty result set) must not be cancelled."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute(
+            "SELECT 1 WHERE 1 = 0", store=Store(format=StorageFormat.PARQUET)
+        )
+        handlers[0](ExecutionResult())
+        assert cursor.get_store_result() is None
+
+        cursor.execute("SELECT 2")
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_failed_query(self):
+        """A failed execution is terminal; re-executing must not cancel it."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT broken")
+        handlers[0](ExecutionResult(error=OperationalError("boom")))
+        with pytest.raises(OperationalError):
+            cursor.fetchall()
+
+        cursor.execute("SELECT 1")
 
         cancel_fn.assert_not_called()
 

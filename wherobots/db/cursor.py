@@ -74,6 +74,8 @@ class Cursor:
         self.__queue: queue.Queue = queue.Queue()
         self.__results: list[Any] | None = None
         self.__store_result: StoreResult | None = None
+        self.__complete: bool = False
+        self.__error: Exception | None = None
         self.__current_execution_id: str | None = None
         self.__current_row: int = 0
 
@@ -96,12 +98,21 @@ class Cursor:
     def __in_flight_execution_id(self) -> str | None:
         """The current execution's id if its result has not yet arrived.
 
-        Once a result has been fetched (or is waiting in the queue), the
-        execution is complete and must not be cancelled.
+        Once a terminal result has been fetched (``__complete``) or is
+        waiting in the queue, the execution is finished and must not be
+        cancelled.
+
+        Results are delivered from the connection's reader thread, so one
+        may arrive between the ``empty()`` check and a cancellation that
+        follows it. That race is benign: the cancel targets an execution
+        that already completed — a server-side no-op, same as when a query
+        finishes while a legitimate cancel is in flight — and the delivered
+        result sits in this execution's own queue, so it can never be
+        observed by a later execution's fetches.
         """
         if (
             self.__current_execution_id is not None
-            and self.__results is None
+            and not self.__complete
             and self.__queue.empty()
         ):
             return self.__current_execution_id
@@ -110,15 +121,23 @@ class Cursor:
     def __get_results(self) -> List[Tuple[Any, ...]] | None:
         if not self.__current_execution_id:
             raise ProgrammingError("No query has been executed yet")
-        if self.__results is not None:
+        if self.__complete:
+            if self.__error:
+                raise self.__error
             return self.__results
 
         execution_result = self.__queue.get()
         if not isinstance(execution_result, ExecutionResult):
             raise ProgrammingError("Unexpected result type")
 
+        # Whatever the outcome — rows, store export, empty result, or error —
+        # the execution has reached a terminal state. ``__results`` alone
+        # cannot signal this: store-backed and empty executions never set it.
+        self.__complete = True
+
         if execution_result.error:
-            raise execution_result.error
+            self.__error = execution_result.error
+            raise self.__error
 
         self.__store_result = execution_result.store_result
         results = execution_result.results
@@ -161,6 +180,8 @@ class Cursor:
         self.__queue = queue.Queue()
         self.__results = None
         self.__store_result = None
+        self.__complete = False
+        self.__error = None
         self.__current_row = 0
         self.__rowcount = -1
         self.__description = None
