@@ -93,8 +93,19 @@ class Cursor:
     def rowcount(self) -> int:
         return self.__rowcount
 
-    def __on_execution_result(self, result) -> None:
-        self.__queue.put(result)
+    def __in_flight_execution_id(self) -> str | None:
+        """The current execution's id if its result has not yet arrived.
+
+        Once a result has been fetched (or is waiting in the queue), the
+        execution is complete and must not be cancelled.
+        """
+        if (
+            self.__current_execution_id is not None
+            and self.__results is None
+            and self.__queue.empty()
+        ):
+            return self.__current_execution_id
+        return None
 
     def __get_results(self) -> List[Tuple[Any, ...]] | None:
         if not self.__current_execution_id:
@@ -140,9 +151,14 @@ class Cursor:
         parameters: Dict[str, Any] | None = None,
         store: Store | None = None,
     ) -> None:
-        if self.__current_execution_id:
-            self.__cancel_fn(self.__current_execution_id)
+        in_flight = self.__in_flight_execution_id()
+        if in_flight:
+            self.__cancel_fn(in_flight)
 
+        # Each execution gets its own queue, and the handler closes over it:
+        # a late result from a superseded execution lands in the orphaned
+        # queue and can never be observed by fetches of the current one.
+        self.__queue = queue.Queue()
         self.__results = None
         self.__store_result = None
         self.__current_row = 0
@@ -151,7 +167,7 @@ class Cursor:
 
         self.__current_execution_id = self.__exec_fn(
             _substitute_parameters(operation, parameters),
-            self.__on_execution_result,
+            self.__queue.put,
             store,
         )
 
@@ -193,8 +209,9 @@ class Cursor:
 
     def close(self) -> None:
         """Close the cursor."""
-        if self.__results is None and self.__current_execution_id:
-            self.__cancel_fn(self.__current_execution_id)
+        in_flight = self.__in_flight_execution_id()
+        if in_flight:
+            self.__cancel_fn(in_flight)
 
     def __iter__(self):
         return self
