@@ -164,6 +164,13 @@ class Connection:
             )
             return
 
+        def complete_query(result: ExecutionResult) -> None:
+            # Terminal delivery: stop tracking the query first. Keeping it in
+            # __queries would retain its handler — and the results the handler
+            # references — for the connection's lifetime (WBC-922).
+            self.__queries.pop(execution_id, None)
+            query.handler(result)
+
         # Incoming state transitions are handled here.
         if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
             try:
@@ -191,7 +198,7 @@ class Connection:
                             store_result.size,
                         )
                         query.state = ExecutionState.COMPLETED
-                        query.handler(ExecutionResult(store_result=store_result))
+                        complete_query(ExecutionResult(store_result=store_result))
                         return
 
                     if query.store is not None:
@@ -201,7 +208,7 @@ class Connection:
                             execution_id,
                         )
                         query.state = ExecutionState.COMPLETED
-                        query.handler(ExecutionResult())
+                        complete_query(ExecutionResult())
                         return
 
                     # No store configured, request results normally
@@ -213,11 +220,11 @@ class Connection:
                 if not results or not isinstance(results, dict):
                     logging.warning("Got no results back from %s.", execution_id)
                     query.state = ExecutionState.COMPLETED
-                    query.handler(ExecutionResult())
+                    complete_query(ExecutionResult())
                     return
 
                 query.state = ExecutionState.COMPLETED
-                query.handler(
+                complete_query(
                     ExecutionResult(results=self._handle_results(execution_id, results))
                 )
             elif query.state == ExecutionState.CANCELLED:
@@ -225,8 +232,7 @@ class Connection:
                     "Query %s has been cancelled; returning empty results.",
                     execution_id,
                 )
-                query.handler(ExecutionResult(results=pandas.DataFrame()))
-                self.__queries.pop(execution_id)
+                complete_query(ExecutionResult(results=pandas.DataFrame()))
             elif query.state == ExecutionState.FAILED:
                 # Don't do anything here; the ERROR event is coming with more
                 # details.
@@ -234,7 +240,7 @@ class Connection:
         elif kind == EventKind.ERROR:
             query.state = ExecutionState.FAILED
             error = message.get("message")
-            query.handler(ExecutionResult(error=OperationalError(error)))
+            complete_query(ExecutionResult(error=OperationalError(error)))
         else:
             logging.warning("Received unknown %s event!", kind)
 
