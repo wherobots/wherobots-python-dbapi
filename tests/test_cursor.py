@@ -6,15 +6,24 @@ These tests verify that:
 2. Pyformat parameter substitution (%(name)s) works correctly with
    type-aware SQL quoting.
 3. Unknown parameter keys raise ProgrammingError.
+4. Fetches only ever observe the most recent execution's result set, and
+   re-executing never cancels an already-completed statement (WBC-922).
 """
 
 from datetime import date
 
+import pandas
 import pytest
 from unittest.mock import MagicMock
 
 from wherobots.db.cursor import Cursor, _substitute_parameters, _quote_value
-from wherobots.db.errors import ProgrammingError
+from wherobots.db.errors import OperationalError, ProgrammingError
+from wherobots.db.models import (
+    ExecutionResult,
+    StorageFormat,
+    Store,
+    StoreResult,
+)
 
 
 def _make_cursor():
@@ -209,6 +218,194 @@ class TestCursorExecuteParameterSubstitution:
         sql = "SELECT * FROM table WHERE id = %(missing)s"
         with pytest.raises(ProgrammingError, match="missing"):
             cursor.execute(sql, parameters={"id": 42})
+
+
+# ---------------------------------------------------------------------------
+# Result isolation and cancellation tests (WBC-922)
+# ---------------------------------------------------------------------------
+
+
+def _make_async_cursor():
+    """Create a Cursor whose exec_fn records each execution's handler.
+
+    Tests deliver results by invoking a recorded handler, mimicking the
+    connection's asynchronous result callbacks.
+    """
+    handlers = []
+
+    def exec_fn(sql, handler, store):
+        handlers.append(handler)
+        return f"exec-{len(handlers)}"
+
+    cancel_fn = MagicMock()
+    return Cursor(exec_fn, cancel_fn), handlers, cancel_fn
+
+
+class TestCursorResultIsolation:
+    """Fetches must only observe the most recent execution's result set."""
+
+    def test_unfetched_result_does_not_leak_into_next_execute(self):
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        handlers[0](ExecutionResult(results=pandas.DataFrame({"x": [1]})))
+
+        # Re-execute without fetching the first result.
+        cursor.execute("SELECT 2")
+        handlers[1](ExecutionResult(results=pandas.DataFrame({"x": [2]})))
+
+        assert cursor.fetchall()["x"].tolist() == [2]
+
+    def test_late_result_from_superseded_execution_is_ignored(self):
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        # First query still in flight when the second is executed.
+        cursor.execute("SELECT 2")
+
+        # The first query's result arrives late (e.g. the empty result the
+        # connection delivers for a cancelled query), then the second's.
+        handlers[0](ExecutionResult(results=pandas.DataFrame()))
+        handlers[1](ExecutionResult(results=pandas.DataFrame({"x": [2]})))
+
+        assert cursor.fetchall()["x"].tolist() == [2]
+
+    def test_fetch_after_fetch_returns_same_results(self):
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        handlers[0](ExecutionResult(results=pandas.DataFrame({"x": [1]})))
+
+        assert cursor.fetchall()["x"].tolist() == [1]
+        assert cursor.fetchall()["x"].tolist() == [1]
+
+    def test_get_store_result_is_idempotent(self):
+        """A second get_store_result() must not block on the drained queue."""
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT 1", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+
+    def test_fetch_after_error_reraises(self):
+        """Repeated fetches of a failed execution re-raise its error instead
+        of blocking on the drained queue."""
+        cursor, handlers, _ = _make_async_cursor()
+
+        cursor.execute("SELECT broken")
+        handlers[0](ExecutionResult(error=OperationalError("boom")))
+
+        with pytest.raises(OperationalError, match="boom"):
+            cursor.fetchall()
+        with pytest.raises(OperationalError, match="boom"):
+            cursor.fetchall()
+
+
+class TestCursorCancellation:
+    """Only genuinely in-flight executions may be cancelled."""
+
+    def test_execute_cancels_in_flight_previous_query(self):
+        cursor, _, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        cursor.execute("SELECT 2")
+
+        cancel_fn.assert_called_once_with("exec-1")
+
+    def test_execute_does_not_cancel_completed_previous_query(self):
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("MERGE INTO t USING s ON t.id = s.id ...")
+        handlers[0](ExecutionResult(results=pandas.DataFrame()))
+
+        # The DML completed (result queued, not fetched); executing another
+        # statement must not attempt to cancel it.
+        cursor.execute("SELECT 1")
+
+        cancel_fn.assert_not_called()
+
+    def test_close_cancels_in_flight_query(self):
+        cursor, _, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        cursor.close()
+
+        cancel_fn.assert_called_once_with("exec-1")
+
+    def test_close_does_not_cancel_completed_query(self):
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT 1")
+        handlers[0](ExecutionResult(results=pandas.DataFrame({"x": [1]})))
+        cursor.close()
+
+        cancel_fn.assert_not_called()
+
+    def test_close_without_execute_does_not_cancel(self):
+        cursor, _, cancel_fn = _make_async_cursor()
+
+        cursor.close()
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_completed_store_query(self):
+        """Store-backed executions never populate __results; completion must
+        still be recognized so they aren't cancelled (WBC-922 review)."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT * FROM t", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+        assert cursor.get_store_result().result_uri == "s3://r/1"
+
+        cursor.execute("SELECT 1")
+
+        cancel_fn.assert_not_called()
+
+    def test_close_does_not_cancel_completed_store_query(self):
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT * FROM t", store=Store(format=StorageFormat.PARQUET))
+        handlers[0](
+            ExecutionResult(store_result=StoreResult(result_uri="s3://r/1", size=42))
+        )
+        cursor.get_store_result()
+        cursor.close()
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_completed_empty_result_query(self):
+        """An execution that completes with neither rows nor a store result
+        (e.g. store configured but empty result set) must not be cancelled."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute(
+            "SELECT 1 WHERE 1 = 0", store=Store(format=StorageFormat.PARQUET)
+        )
+        handlers[0](ExecutionResult())
+        assert cursor.get_store_result() is None
+
+        cursor.execute("SELECT 2")
+
+        cancel_fn.assert_not_called()
+
+    def test_execute_does_not_cancel_failed_query(self):
+        """A failed execution is terminal; re-executing must not cancel it."""
+        cursor, handlers, cancel_fn = _make_async_cursor()
+
+        cursor.execute("SELECT broken")
+        handlers[0](ExecutionResult(error=OperationalError("boom")))
+        with pytest.raises(OperationalError):
+            cursor.fetchall()
+
+        cursor.execute("SELECT 1")
+
+        cancel_fn.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

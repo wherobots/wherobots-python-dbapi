@@ -74,6 +74,8 @@ class Cursor:
         self.__queue: queue.Queue = queue.Queue()
         self.__results: list[Any] | None = None
         self.__store_result: StoreResult | None = None
+        self.__complete: bool = False
+        self.__error: Exception | None = None
         self.__current_execution_id: str | None = None
         self.__current_row: int = 0
 
@@ -93,21 +95,49 @@ class Cursor:
     def rowcount(self) -> int:
         return self.__rowcount
 
-    def __on_execution_result(self, result) -> None:
-        self.__queue.put(result)
+    def __in_flight_execution_id(self) -> str | None:
+        """The current execution's id if its result has not yet arrived.
+
+        Once a terminal result has been fetched (``__complete``) or is
+        waiting in the queue, the execution is finished and must not be
+        cancelled.
+
+        Results are delivered from the connection's reader thread, so one
+        may arrive between the ``empty()`` check and a cancellation that
+        follows it. That race is benign: the cancel targets an execution
+        that already completed — a server-side no-op, same as when a query
+        finishes while a legitimate cancel is in flight — and the delivered
+        result sits in this execution's own queue, so it can never be
+        observed by a later execution's fetches.
+        """
+        if (
+            self.__current_execution_id is not None
+            and not self.__complete
+            and self.__queue.empty()
+        ):
+            return self.__current_execution_id
+        return None
 
     def __get_results(self) -> List[Tuple[Any, ...]] | None:
         if not self.__current_execution_id:
             raise ProgrammingError("No query has been executed yet")
-        if self.__results is not None:
+        if self.__complete:
+            if self.__error:
+                raise self.__error
             return self.__results
 
         execution_result = self.__queue.get()
         if not isinstance(execution_result, ExecutionResult):
             raise ProgrammingError("Unexpected result type")
 
+        # Whatever the outcome — rows, store export, empty result, or error —
+        # the execution has reached a terminal state. ``__results`` alone
+        # cannot signal this: store-backed and empty executions never set it.
+        self.__complete = True
+
         if execution_result.error:
-            raise execution_result.error
+            self.__error = execution_result.error
+            raise self.__error
 
         self.__store_result = execution_result.store_result
         results = execution_result.results
@@ -140,18 +170,25 @@ class Cursor:
         parameters: Dict[str, Any] | None = None,
         store: Store | None = None,
     ) -> None:
-        if self.__current_execution_id:
-            self.__cancel_fn(self.__current_execution_id)
+        in_flight = self.__in_flight_execution_id()
+        if in_flight:
+            self.__cancel_fn(in_flight)
 
+        # Each execution gets its own queue, and the handler closes over it:
+        # a late result from a superseded execution lands in the orphaned
+        # queue and can never be observed by fetches of the current one.
+        self.__queue = queue.Queue()
         self.__results = None
         self.__store_result = None
+        self.__complete = False
+        self.__error = None
         self.__current_row = 0
         self.__rowcount = -1
         self.__description = None
 
         self.__current_execution_id = self.__exec_fn(
             _substitute_parameters(operation, parameters),
-            self.__on_execution_result,
+            self.__queue.put,
             store,
         )
 
@@ -193,8 +230,9 @@ class Cursor:
 
     def close(self) -> None:
         """Close the cursor."""
-        if self.__results is None and self.__current_execution_id:
-            self.__cancel_fn(self.__current_execution_id)
+        in_flight = self.__in_flight_execution_id()
+        if in_flight:
+            self.__cancel_fn(in_flight)
 
     def __iter__(self):
         return self
