@@ -235,7 +235,7 @@ class TestWherobotsClientHeader:
     @patch("wherobots.db.driver.requests.post")
     def test_appends_dbapi_hop_to_inbound_chain(self, mock_post, mock_get):
         """An inbound X-Wherobots-Client chain gets the dbapi hop appended on the right."""
-        inbound = "client=claude_web, client=mcp;ver=0.9"
+        inbound = "client=claude-web, client=mcp;ver=0.9"
         post_kwargs = _run_connect(
             mock_post,
             mock_get,
@@ -259,7 +259,7 @@ class TestWherobotsClientHeader:
     @patch("wherobots.db.driver.requests.post")
     def test_appends_case_insensitively(self, mock_post, mock_get):
         """A differently-cased inbound header is matched and collapsed to one canonical header."""
-        inbound = "client=claude_web"
+        inbound = "client=claude-web"
         post_kwargs = _run_connect(
             mock_post,
             mock_get,
@@ -292,7 +292,7 @@ class TestWherobotsClientHeader:
         post_kwargs = _run_connect(
             mock_post,
             mock_get,
-            extra_headers={"X-Wherobots-Client": "client=claude_web"},
+            extra_headers={"X-Wherobots-Client": "client=claude-web"},
         )
         # api_key auth is set by _run_connect; extra_headers must not remove it.
         assert post_kwargs["headers"]["X-API-Key"] == "test-key"
@@ -347,7 +347,7 @@ class TestWherobotsClientHeader:
     @patch("wherobots.db.driver.requests.post")
     def test_ws_upgrade_carries_appended_header(self, mock_post, mock_get):
         """The appended X-Wherobots-Client also flows to the WebSocket upgrade path."""
-        inbound = "client=claude_web, client=mcp;ver=0.9"
+        inbound = "client=claude-web, client=mcp;ver=0.9"
         _post_kwargs, cd_kwargs = _run_connect_full(
             mock_post,
             mock_get,
