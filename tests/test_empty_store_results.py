@@ -22,9 +22,8 @@ class TestEmptyStoreResults:
     def _make_connection_and_cursor(self):
         """Create a Connection with a mocked WebSocket and return (connection, cursor)."""
         mock_ws = MagicMock()
-        # Prevent the background thread from running the main loop
-        mock_ws.protocol.state = 4  # CLOSED state, so __main_loop exits immediately
-        conn = Connection(mock_ws)
+        with patch("wherobots.db.connection.threading.Thread.start"):
+            conn = Connection(mock_ws)
         cursor = conn.cursor()
         return conn, cursor
 
@@ -150,8 +149,8 @@ class TestDefensiveNullResults:
 
     def _make_connection_and_cursor(self):
         mock_ws = MagicMock()
-        mock_ws.protocol.state = 4
-        conn = Connection(mock_ws)
+        with patch("wherobots.db.connection.threading.Thread.start"):
+            conn = Connection(mock_ws)
         cursor = conn.cursor()
         return conn, cursor
 

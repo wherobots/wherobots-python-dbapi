@@ -1,5 +1,6 @@
 import json
 import logging
+import queue
 import textwrap
 import threading
 import uuid
@@ -12,7 +13,6 @@ import pandas
 import pyarrow
 import cbor2
 import websockets.exceptions
-import websockets.protocol
 import websockets.sync.client
 
 from .constants import DEFAULT_READ_TIMEOUT_SECONDS
@@ -64,6 +64,8 @@ class Connection:
         results_format: ResultsFormat | None = None,
         data_compression: DataCompression | None = None,
         geometry_representation: GeometryRepresentation | None = None,
+        session_id: str | None = None,
+        failure_details: Callable[[], str | None] | None = None,
     ):
         self.__ws = ws
         self.__read_timeout = read_timeout
@@ -72,6 +74,10 @@ class Connection:
         self.__geometry_representation = geometry_representation
         self.__progress_handler: ProgressHandler | None = None
 
+        self.__session_id = session_id
+        self.__failure_details = failure_details
+        self.__lock = threading.Lock()
+        self.__closed = False
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
             target=self.__main_loop, daemon=True, name="wherobots-connection"
@@ -85,6 +91,7 @@ class Connection:
         self.close()
 
     def close(self) -> None:
+        self.__fail_pending(enrich=False)
         self.__ws.close()
 
     def commit(self) -> None:
@@ -114,17 +121,78 @@ class Connection:
     def __main_loop(self) -> None:
         """Main background loop listening for messages from the SQL session."""
         logging.info("Starting background connection handling loop...")
-        while self.__ws.protocol.state < websockets.protocol.State.CLOSING:
+        try:
+            self.__receive_loop()
+        finally:
+            self.__fail_pending()
+
+    def __receive_loop(self) -> None:
+        # recv drains buffered results before raising ConnectionClosed.
+        while True:
             try:
                 self.__listen()
             except TimeoutError:
                 # Expected, retry next time
                 continue
-            except websockets.exceptions.ConnectionClosedOK:
+            except websockets.exceptions.ConnectionClosed:
                 logging.info("Connection closed; stopping main loop.")
                 return
             except Exception as e:
                 logging.exception("Error handling message from SQL session", exc_info=e)
+                return
+
+    def __connection_error(
+        self, execution_id: str, details: str | None = None
+    ) -> OperationalError:
+        message = (
+            f"SQL connection lost (session={self.__session_id or 'unknown'}, "
+            f"execution={execution_id}). Commit outcome is unknown; "
+            "verify the operation before retrying writes."
+        )
+        if details:
+            message += f" Session failure: {details}"
+        return OperationalError(message)
+
+    def __fail_pending(self, enrich: bool = True) -> None:
+        # Claim terminal delivery atomically with query registration/result delivery.
+        with self.__lock:
+            if self.__closed:
+                return
+            self.__closed = True
+            pending = list(self.__queries.values())
+            self.__queries.clear()
+        details = None
+        if pending and enrich and self.__failure_details is not None:
+            # requests' socket timeouts don't bound DNS or a trickling response.
+            # One daemon lookup per connection bounds the callers' total wait too.
+            result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+            def lookup() -> None:
+                try:
+                    result_queue.put(self.__failure_details())
+                except Exception:
+                    result_queue.put(None)
+
+            try:
+                threading.Thread(
+                    target=lookup, daemon=True, name="wherobots-failure-details"
+                ).start()
+                details = result_queue.get(timeout=2.0)
+            except (queue.Empty, RuntimeError):
+                # Enrichment must not prevent failure delivery, even if the
+                # process cannot start another thread.
+                pass
+        for query in pending:
+            try:
+                query.handler(
+                    ExecutionResult(
+                        error=self.__connection_error(query.execution_id, details)
+                    )
+                )
+            except Exception:
+                logging.exception(
+                    "Could not deliver connection failure to query handler"
+                )
 
     def __listen(self) -> None:
         """Waits for the next message from the SQL session and processes it.
@@ -168,8 +236,10 @@ class Connection:
             # Terminal delivery: stop tracking the query first. Keeping it in
             # __queries would retain its handler — and the results the handler
             # references — for the connection's lifetime (WBC-922).
-            self.__queries.pop(execution_id, None)
-            query.handler(result)
+            with self.__lock:
+                claimed = self.__queries.pop(execution_id, None)
+            if claimed is not None:
+                claimed.handler(result)
 
         # Incoming state transitions are handled here.
         if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
@@ -318,13 +388,16 @@ class Connection:
         if store:
             request["store"] = store.to_dict()
 
-        self.__queries[execution_id] = Query(
-            sql=sql,
-            execution_id=execution_id,
-            state=ExecutionState.EXECUTION_REQUESTED,
-            handler=handler,
-            store=store,
-        )
+        with self.__lock:
+            if self.__closed:
+                raise self.__connection_error(execution_id)
+            self.__queries[execution_id] = Query(
+                sql=sql,
+                execution_id=execution_id,
+                state=ExecutionState.EXECUTION_REQUESTED,
+                handler=handler,
+                store=store,
+            )
 
         # Redact literal values before logging: this driver is embedded by other
         # services, so raw SQL here would leak into their log streams (WBC-139).
@@ -334,7 +407,10 @@ class Connection:
             get_statement_type(sql),
             textwrap.shorten(redact_sql(sql), width=200),
         )
-        self.__send(request)
+        try:
+            self.__send(request)
+        except Exception:
+            self.__fail_pending()
         return execution_id
 
     def __request_results(self, execution_id: str) -> None:
