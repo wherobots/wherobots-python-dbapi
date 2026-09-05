@@ -267,6 +267,7 @@ def connect(
         data_compression=data_compression,
         geometry_representation=geometry_representation,
         cancel_event=cancel_event,
+        session_status_url=session_id_url,
     )
 
 
@@ -294,6 +295,7 @@ def connect_direct(
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
+    session_status_url: str | None = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -331,10 +333,30 @@ def connect_direct(
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
 
+    def failure_details() -> str | None:
+        if session_status_url is None:
+            return None
+        # Never follow a status redirect with the caller's credentials.
+        with requests.get(
+            session_status_url, headers=headers, timeout=1.0, allow_redirects=False
+        ) as response:
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+        failure = payload.get("firstFailure") if isinstance(payload, dict) else None
+        if not isinstance(failure, dict):
+            return None
+        message = failure.get("message")
+        return message[:4096] if isinstance(message, str) else None
+
     return Connection(
         ws,
         read_timeout=read_timeout,
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        session_id=urllib.parse.urlparse(session_status_url).path.rsplit("/", 1)[-1]
+        if session_status_url
+        else None,
+        failure_details=failure_details if session_status_url else None,
     )
