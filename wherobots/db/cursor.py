@@ -186,6 +186,9 @@ class Cursor:
         self.__rowcount = -1
         self.__description = None
 
+        # A rejected submission must not leave the previous execution ID paired
+        # with this new empty queue (which would make a later fetch wait forever).
+        self.__current_execution_id = None
         self.__current_execution_id = self.__exec_fn(
             _substitute_parameters(operation, parameters),
             self.__queue.put,

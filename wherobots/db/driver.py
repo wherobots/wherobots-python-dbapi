@@ -267,6 +267,10 @@ def connect(
         data_compression=data_compression,
         geometry_representation=geometry_representation,
         cancel_event=cancel_event,
+        session_status_url=session_id_url,
+        session_id=urllib.parse.urlparse(session_id_url)
+        .path.rstrip("/")
+        .rsplit("/", 1)[-1],
     )
 
 
@@ -294,6 +298,8 @@ def connect_direct(
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
+    session_id: str | None = None,
+    session_status_url: str | None = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -331,10 +337,29 @@ def connect_direct(
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
 
+    on_connection_lost = None
+    if session_status_url is not None:
+        from ._diagnostics import session_diagnostics
+
+        if session_id is None:
+            session_id = (
+                urllib.parse.urlparse(session_status_url)
+                .path.rstrip("/")
+                .rsplit("/", 1)[-1]
+            )
+        diagnostic_headers = dict(headers or {})
+
+        def on_connection_lost() -> None:
+            session_diagnostics.request(
+                session_status_url, diagnostic_headers, session_id or "unknown"
+            )
+
     return Connection(
         ws,
         read_timeout=read_timeout,
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        session_id=session_id,
+        on_connection_lost=on_connection_lost,
     )
