@@ -128,6 +128,91 @@ def reply(session, execution_id, state="succeeded", **fields):
     )
 
 
+def test_probe_reply_with_result_uri_completes_store_query(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session(
+        on_probe=lambda s, m: reply(
+            s, m["execution_id"], result_uri=RESULT_URI, size=42
+        )
+    )
+    conn = connect(session)
+    try:
+        # The terminal state_updated is never delivered.
+        cursor, execution_id = execute(conn, session, store=STORE)
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.store_result.result_uri == RESULT_URI
+        assert result.store_result.size == 42
+        assert tracked(conn, execution_id) is None
+        assert len(session.probe_times()) == 1
+        assert f"No events for query {execution_id}" in caplog.text
+        assert f"Query {execution_id} recovered" in caplog.text
+    finally:
+        conn.close()
+
+
+def test_store_query_succeeded_without_result_uri_keeps_waiting(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session(on_probe=lambda s, m: reply(s, m["execution_id"]))
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert wait_until(lambda: "no result location" in caplog.text)
+        warnings = [r for r in caplog.records if "no result location" in r.message]
+        assert warnings[0].levelno == logging.WARNING
+        # Not completed empty, and not re-probed: the answer wouldn't change.
+        time.sleep(PROBE * 8)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id).state == ExecutionState.SUCCEEDED
+        assert len(session.probe_times()) == 1
+        # The genuine terminal event still completes it.
+        session.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=7,
+        )
+        assert results_of(cursor).get(timeout=3).store_result.result_uri == RESULT_URI
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("late_event_first", [True, False])
+def test_late_state_updated_racing_probe_reply_delivers_once(late_event_first):
+    def on_probe(s, m):
+        late = dict(
+            kind="state_updated",
+            execution_id=m["execution_id"],
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=1,
+        )
+        probe_reply = dict(
+            kind="execution_result",
+            execution_id=m["execution_id"],
+            state="succeeded",
+            results=None,
+            result_uri=RESULT_URI,
+            size=1,
+        )
+        for message in (late, probe_reply) if late_event_first else (probe_reply, late):
+            s.incoming.put(message)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert results_of(cursor).get(timeout=3).store_result.result_uri == RESULT_URI
+        assert wait_until(session.incoming.empty)
+        time.sleep(PROBE * 4)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is None
+        assert len(session.probe_times()) == 1
+    finally:
+        conn.close()
+
+
 def test_disabled_watchdog_never_probes():
     session = Session()
     conn = connect(session, stale_query_probe_seconds=None)

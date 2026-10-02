@@ -538,6 +538,18 @@ class Connection:
             logging.error("%s", message)
             complete_query(ExecutionResult(error=OperationalError(message)))
 
+        def complete_with_store_result(result_uri: str) -> None:
+            # Results are stored in cloud storage
+            store_result = StoreResult(result_uri=result_uri, size=message.get("size"))
+            logging.info(
+                "Query %s results stored at: %s (size: %s)",
+                execution_id,
+                result_uri,
+                store_result.size,
+            )
+            query.state = ExecutionState.COMPLETED
+            complete_query(ExecutionResult(store_result=store_result))
+
         # Incoming state transitions are handled here.
         if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
             try:
@@ -553,19 +565,7 @@ class Connection:
                 if kind == EventKind.STATE_UPDATED:
                     result_uri = message.get("result_uri")
                     if result_uri:
-                        # Results are stored in cloud storage
-                        store_result = StoreResult(
-                            result_uri=result_uri,
-                            size=message.get("size"),
-                        )
-                        logging.info(
-                            "Query %s results stored at: %s (size: %s)",
-                            execution_id,
-                            result_uri,
-                            store_result.size,
-                        )
-                        query.state = ExecutionState.COMPLETED
-                        complete_query(ExecutionResult(store_result=store_result))
+                        complete_with_store_result(result_uri)
                         return
 
                     if query.store is not None:
@@ -587,8 +587,34 @@ class Connection:
                         fail_query("request", error)
                     return
 
-                # Otherwise, process the results from the execution_result event.
+                # Otherwise, this execution_result answers a retrieve_results.
+                # For a store-configured query, that can only be a stale-query
+                # probe: the normal path never requests results for one.
+                # Sessions with the probe contract echo the store location.
+                result_uri = message.get("result_uri")
+                if result_uri:
+                    complete_with_store_result(result_uri)
+                    return
+
                 results = message.get("results")
+                if query.store is not None and (results is None or results == {}):
+                    # Succeeded without a result location: either an older
+                    # session that doesn't echo it, or an empty store result
+                    # (no store_path). The two are indistinguishable, and
+                    # completing empty would silently drop an old session's
+                    # real result. Keep waiting for the genuine state_updated,
+                    # exactly as without the watchdog, and don't probe again:
+                    # the answer won't change. Known limitation: an empty store
+                    # result whose terminal event was lost can't be recovered.
+                    query.watch.probeable = False
+                    logging.warning(
+                        "Query %s succeeded, but the SQL session's reply has no "
+                        "result location (older SQL session, or an empty store "
+                        "result); cannot recover it, still waiting.",
+                        execution_id,
+                    )
+                    return
+
                 if results is None or results == {}:
                     logging.warning("Got no results back from %s.", execution_id)
                     query.state = ExecutionState.COMPLETED
