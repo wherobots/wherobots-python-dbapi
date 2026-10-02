@@ -20,6 +20,7 @@ import certifi
 
 from .connection import Connection
 from .constants import (
+    DEFAULT_CLOSE_TIMEOUT_SECONDS,
     DEFAULT_ENDPOINT,
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
@@ -267,6 +268,9 @@ def connect(
         data_compression=data_compression,
         geometry_representation=geometry_representation,
         cancel_event=cancel_event,
+        session_id=urllib.parse.urlparse(session_id_url)
+        .path.rstrip("/")
+        .rsplit("/", 1)[-1],
     )
 
 
@@ -294,6 +298,7 @@ def connect_direct(
     data_compression: Union[DataCompression, None] = None,
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
+    session_id: str | None = None,
 ) -> Connection:
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -321,6 +326,7 @@ def connect_direct(
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
             open_timeout=DEFAULT_HTTP_TIMEOUT,
+            close_timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS,
             ssl=ssl_context,
         )
 
@@ -337,4 +343,5 @@ def connect_direct(
         results_format=results_format,
         data_compression=data_compression,
         geometry_representation=geometry_representation,
+        session_id=session_id,
     )

@@ -14,6 +14,8 @@ DEFAULT_REGION: Region = Region.AWS_US_WEST_2
 DEFAULT_SESSION_TYPE: SessionType = SessionType.MULTI
 DEFAULT_STORAGE_FORMAT: StorageFormat = StorageFormat.PARQUET
 DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
+# Bound on the WebSocket close handshake performed by a graceful close().
+DEFAULT_CLOSE_TIMEOUT_SECONDS: float = 1.0
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
 
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB

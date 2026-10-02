@@ -9,7 +9,7 @@ the connection's lifetime.
 
 import json
 import queue
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import cbor2
 import pyarrow
@@ -22,9 +22,8 @@ from wherobots.db.types import ExecutionState, StorageFormat
 def _make_connection():
     """Create a Connection with a mocked WebSocket."""
     mock_ws = MagicMock()
-    # Prevent the background thread from running the main loop
-    mock_ws.protocol.state = 4  # CLOSED state, so __main_loop exits immediately
-    return Connection(mock_ws)
+    with patch("wherobots.db.connection.threading.Thread.start"):
+        return Connection(mock_ws)
 
 
 def _track_query(conn, execution_id="exec-1", state=ExecutionState.RUNNING, store=None):

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from wherobots.db.constants import DEFAULT_CLOSE_TIMEOUT_SECONDS
 from wherobots.db.driver import (
     DEFAULT_HTTP_TIMEOUT,
     _check_cancelled,
@@ -29,7 +30,7 @@ def _run_connect(mock_post, mock_get, **connect_kwargs):
     return kwargs
 
 
-def _run_connect_full(mock_post, mock_get, **connect_kwargs):
+def _run_connect_full(mock_post, mock_get, session_url=None, **connect_kwargs):
     """Drive a successful connect().
 
     Returns a tuple of (kwargs passed to requests.post, kwargs passed to the
@@ -38,7 +39,7 @@ def _run_connect_full(mock_post, mock_get, **connect_kwargs):
     """
     post_resp = MagicMock()
     post_resp.status_code = 200
-    post_resp.url = "https://api.example.com/sql/session/test-id"
+    post_resp.url = session_url or "https://api.example.com/sql/session/test-id"
     post_resp.raise_for_status = MagicMock()
     mock_post.return_value = post_resp
 
@@ -62,6 +63,17 @@ def _run_connect_full(mock_post, mock_get, **connect_kwargs):
 
 class TestConnectRegionRuntime:
     """region/runtime accept enum|str and are omitted when not provided."""
+
+    @pytest.mark.parametrize("suffix", ["", "/", "/?ignored=value"])
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_id_is_derived_from_status_url(self, mock_post, mock_get, suffix):
+        _, kwargs = _run_connect_full(
+            mock_post,
+            mock_get,
+            session_url="https://api.example.com/sql/session/test-id" + suffix,
+        )
+        assert kwargs["session_id"] == "test-id"
 
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
@@ -221,6 +233,20 @@ class TestConnectDirectCancelEvent:
             )
 
         mock_ws.assert_not_called()
+
+
+class TestConnectDirectWebSocket:
+    @patch("wherobots.db.driver.websockets.sync.client.connect")
+    def test_close_handshake_is_bounded(self, mock_ws):
+        from websockets.exceptions import ConnectionClosedOK
+
+        ws = MagicMock()
+        ws.recv.side_effect = ConnectionClosedOK(None, None)
+        mock_ws.return_value = ws
+        conn = connect_direct(uri="wss://compute.example.com/sql/org/session-id")
+        conn.close()
+        _, kwargs = mock_ws.call_args
+        assert kwargs["close_timeout"] == DEFAULT_CLOSE_TIMEOUT_SECONDS
 
 
 class TestWherobotsClientHeader:
