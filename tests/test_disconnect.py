@@ -34,6 +34,8 @@ class Transport:
         self.aborted = threading.Event()
         self.closed = threading.Event()
         self.close_calls = 0
+        # Mirrors connect()'s DEFAULT_CLOSE_TIMEOUT_SECONDS; bounds the handshake.
+        self.close_timeout = 1.0
         self.socket = MagicMock()
         self.socket.shutdown.side_effect = self.shutdown
 
@@ -530,6 +532,150 @@ def test_concurrent_close_delivers_once():
     assert cursor._Cursor__queue.empty()
     assert ws.close_calls == 1
     ws.socket.shutdown.assert_not_called()
+
+
+_MISSING = object()
+
+
+class _NeverCompares(float):
+    """A float subclass whose comparisons all report False."""
+
+    def __lt__(self, other):
+        return False
+
+    __le__ = __gt__ = __ge__ = __lt__
+
+
+def test_concurrent_close_waits_for_a_slow_handshake_to_deliver():
+    # Closer A owns shutdown and is mid-handshake for longer than 1s, within
+    # the transport's close_timeout. Closer B must not return before A has
+    # failed the pending query.
+    ws = Transport()
+    ws.close_timeout = 1.5
+    conn = Connection(ws)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    handshaking = threading.Event()
+    original_close = ws.close
+
+    def slow_close():
+        handshaking.set()
+        time.sleep(1.3)
+        original_close()
+
+    ws.close = slow_close
+    closer = threading.Thread(target=conn.close)
+    closer.start()
+    try:
+        assert handshaking.wait(timeout=1)
+        conn.close()
+        delivered = not cursor._Cursor__queue.empty()
+    finally:
+        closer.join(timeout=3)
+    assert delivered
+    assert not closer.is_alive()
+    assert isinstance(cursor._Cursor__queue.get(timeout=1).error, OperationalError)
+    assert cursor._Cursor__queue.empty()
+    assert ws.close_calls == 1
+
+
+def test_slow_handshake_does_not_consume_reader_join():
+    # The handshake uses most of close_timeout. A long read_timeout keeps the
+    # reader parked in recv(), so only the end-of-stream delivered 0.3s after
+    # the handshake wakes it; close() must still be waiting then.
+    ws = Transport()
+    conn = Connection(ws, read_timeout=10)
+
+    def slow_close():
+        time.sleep(0.9)
+        ws.close_calls += 1
+        ws.aborted.set()
+        eof = ConnectionClosedOK(None, None)
+        threading.Timer(0.3, ws.incoming.put, args=(eof,)).start()
+
+    ws.close = slow_close
+    conn.close()
+    assert not conn._Connection__thread.is_alive()
+    assert ws.close_calls == 1
+    ws.socket.shutdown.assert_not_called()
+
+
+def test_close_timeout_cleared_after_construction_aborts():
+    # websockets reads close_timeout live, so the bound is resolved at close().
+    ws = Transport()
+    conn = Connection(ws)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    ws.close_timeout = None
+    begun = time.monotonic()
+    conn.close()
+    assert time.monotonic() - begun < 1
+    assert ws.close_calls == 0
+    ws.socket.shutdown.assert_called_once()
+    with pytest.raises(OperationalError):
+        cursor.fetchall()
+
+
+class _RaisingCloseTimeout(Transport):
+    @property
+    def close_timeout(self):
+        raise RuntimeError("close_timeout unavailable")
+
+    @close_timeout.setter
+    def close_timeout(self, value):
+        pass
+
+
+def test_close_timeout_read_error_still_aborts_and_fails_pending():
+    # The bound is read after the __closed latch is set; an error there must
+    # not strand pending queries.
+    ws = _RaisingCloseTimeout()
+    conn = Connection(ws)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    conn.close()
+    assert ws.close_calls == 0
+    ws.socket.shutdown.assert_called_once()
+    with pytest.raises(OperationalError):
+        cursor.fetchall()
+    assert conn._Connection__shutdown_done.is_set()
+    assert not conn._Connection__thread.is_alive()
+
+
+@pytest.mark.parametrize(
+    "close_timeout",
+    [
+        None,
+        "1",
+        True,
+        0,
+        -1.0,
+        float("inf"),
+        float("nan"),
+        pytest.param(10**400, id="huge-int"),
+        pytest.param(1e300, id="huge-float"),
+        pytest.param(_NeverCompares(1e300), id="float-subclass-lying-compare"),
+        MagicMock(),
+        _MISSING,
+    ],
+)
+def test_unbounded_close_timeout_aborts_instead_of_handshaking(close_timeout):
+    ws = Transport()
+    if close_timeout is _MISSING:
+        del ws.close_timeout
+    else:
+        ws.close_timeout = close_timeout
+    conn = Connection(ws)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    begun = time.monotonic()
+    conn.close()
+    assert time.monotonic() - begun < 1
+    assert ws.close_calls == 0
+    ws.socket.shutdown.assert_called_once()
+    assert not conn._Connection__thread.is_alive()
+    with pytest.raises(OperationalError):
+        cursor.fetchall()
 
 
 def test_abort_closes_socket_even_if_shutdown_errors():

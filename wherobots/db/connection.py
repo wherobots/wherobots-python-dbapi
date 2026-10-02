@@ -1,8 +1,8 @@
 import json
 import logging
+import math
 import textwrap
 import threading
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict
@@ -36,6 +36,37 @@ ProgressHandler = Callable[[ProgressInfo], None]
 
 class _TransportError(Exception):
     """An I/O failure raised while receiving from the WebSocket."""
+
+
+_READER_JOIN_SECONDS = 1.0
+"""How long close() waits for the reader thread once teardown has finished."""
+
+
+def _handshake_bound(ws: Any) -> float | None:
+    """The transport's ``close_timeout`` if it bounds the close handshake.
+
+    websockets documents ``close_timeout=None`` as disabling the timeout, which
+    would make a graceful close unbounded against an unresponsive peer. Return
+    ``None`` for that, and for a missing, non-numeric (including ``bool`` and
+    mock), non-finite, non-positive, or too-large value; callers then abort
+    instead. Too large means the ``bound + 1s`` wait in ``close()`` would
+    exceed ``threading.TIMEOUT_MAX``.
+    Never raises ``Exception``: a failure here would strand pending queries.
+    """
+    try:
+        value = getattr(ws, "close_timeout", None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        # Range-check a plain float, so a subclass can't override the
+        # comparisons. float() raises OverflowError for a huge int.
+        value = float(value)
+        if not math.isfinite(value) or value <= 0:
+            return None
+        if value > threading.TIMEOUT_MAX - 1.0:
+            return None
+        return value
+    except Exception:
+        return None
 
 
 @dataclass
@@ -83,6 +114,9 @@ class Connection:
         self.__send_lock = threading.Lock()
         self.__shutdown_done = threading.Event()
         self.__shutdown_owner: int | None = None
+        # Resolved when shutdown starts (websockets reads close_timeout live),
+        # so the graceful/abort decision and a second closer's wait agree.
+        self.__close_bound: float | None = None
         self.__closed = False
         self.__queries: dict[str, Query] = {}
         self.__thread = threading.Thread(
@@ -97,26 +131,37 @@ class Connection:
         self.close()
 
     def close(self) -> None:
-        """Close the transport, fail pending work, and wait up to 1s for the reader.
+        """Close the transport, fail pending work, then wait for the reader.
 
         The WebSocket close handshake is attempted when no send is in flight,
         so the server can distinguish a client exit from a crash; otherwise the
         socket is aborted. The handshake is bounded by the ``close_timeout`` of
         the underlying ``ClientConnection`` (1s via ``connect``/
         ``connect_direct``; the library default of 10s for a caller-built
-        socket), and shares the 1s budget below with the reader join.
+        socket). If ``close_timeout`` doesn't bound it (``None``, missing, or
+        not a finite positive number), the socket is aborted instead.
+
+        Pending work has been failed by the time ``close()`` returns, also when
+        another thread is closing concurrently. After teardown, ``close()``
+        waits up to 1s for the reader thread, so a single call takes at most
+        about ``close_timeout`` + 1s. A second, concurrent ``close()`` can take
+        up to ``close_timeout`` + 2s (about 12s on a caller-built socket using
+        the library's 10s default).
 
         Closing doesn't imply that server-side writes were rolled back. A
         decoder or callback can outlive the bounded reader join.
         """
-        deadline = time.monotonic() + 1.0
         self.__fail_pending(graceful=True)
         # A handler may close its own connection during terminal delivery.
         if self.__shutdown_owner == threading.get_ident():
             return
-        self.__shutdown_done.wait(max(0.0, deadline - time.monotonic()))
+        # Another thread may own shutdown and be mid-handshake, which is bounded
+        # by close_timeout; outlast it so close() never returns before pending
+        # work has been failed.
+        self.__shutdown_done.wait((self.__close_bound or 0.0) + 1.0)
+        # Timed from here, not from entry, so a slow handshake can't consume it.
         if self.__thread is not threading.current_thread():
-            self.__thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            self.__thread.join(timeout=_READER_JOIN_SECONDS)
 
     def commit(self) -> None:
         raise NotSupportedError
@@ -180,11 +225,16 @@ class Connection:
     def __fail_pending(self, graceful: bool = False) -> None:
         # Stop admission first. Do not wait for __send_lock: its owner may be
         # blocked in network I/O. __closed means closing until shutdown_done.
+        # Resolve the bound before taking __lock: it reads a transport
+        # attribute, which may be a property, and nothing foreign may run under
+        # __lock or between the latch and the delivery try/finally.
+        bound = _handshake_bound(self.__ws)
         with self.__lock:
             if self.__closed:
                 return
             self.__closed = True
             self.__shutdown_owner = threading.get_ident()
+            self.__close_bound = bound
         # __closed is a one-way latch: nothing below may be skipped, or pending
         # queries are stranded with no path to recovery.
         try:
@@ -218,8 +268,13 @@ class Connection:
         # senders (including the reader's own __request_results) for up to
         # close_timeout instead of letting them fail fast. On a reader-side
         # failure the transport is already broken and a close frame is
-        # pointless, so callers abort directly.
-        if graceful and self.__send_lock.acquire(blocking=False):
+        # pointless, so callers abort directly. Without a handshake bound the
+        # close could block forever, so abort then too.
+        if (
+            graceful
+            and self.__close_bound is not None
+            and self.__send_lock.acquire(blocking=False)
+        ):
             self.__send_lock.release()
             try:
                 self.__ws.close()
