@@ -277,3 +277,8 @@ users may find useful:
     caller needs to interrupt it (e.g. on client disconnect or timeout).
     The event is checked before each HTTP request, between retry
     attempts, and before the WebSocket handshake.
+* `stale_query_probe_seconds`: how long a running query may go without
+    any message from the SQL session before the driver asks the session
+    for its state again, in case the query's completion event was lost.
+    Repeat probes back off to at most 8 times this interval. Defaults to
+    30 seconds; pass `None` to disable probing.

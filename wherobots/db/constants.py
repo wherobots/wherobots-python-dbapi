@@ -17,6 +17,8 @@ DEFAULT_READ_TIMEOUT_SECONDS: float = 0.25
 # Bound on the WebSocket close handshake performed by a graceful close().
 DEFAULT_CLOSE_TIMEOUT_SECONDS: float = 1.0
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
+# Silence, per query, before the driver re-asks the session for its state.
+DEFAULT_STALE_QUERY_PROBE_SECONDS: float = 30.0
 
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")

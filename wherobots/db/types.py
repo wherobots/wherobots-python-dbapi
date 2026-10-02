@@ -9,6 +9,9 @@ class ExecutionState(LowercaseStrEnum):
     EXECUTION_REQUESTED = auto()
     "Execution of a query has been requested by the driver."
 
+    PENDING = auto()
+    "The SQL session has accepted the query but not started running it yet."
+
     RUNNING = auto()
     "The SQL session has reported the query is running."
 
