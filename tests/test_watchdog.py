@@ -3,6 +3,7 @@
 import json
 import logging
 import queue
+import re
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -248,6 +249,33 @@ def test_steady_traffic_for_one_query_does_not_starve_anothers_watchdog():
     finally:
         stop.set()
         conn.close()
+
+
+def test_unanswered_probe_log_reports_silence_since_the_last_event(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session()  # Never answers probes.
+    conn = connect(session, stale_query_probe_seconds=SLOW_PROBE)
+    try:
+        _, execution_id = execute(conn, session)
+        assert wait_until(lambda: len(session.probe_times()) >= 2, timeout=5)
+        last_event = tracked(conn, execution_id).watch.last_event
+        second_probe_at = session.probe_times()[1]
+    finally:
+        conn.close()
+    logs = [
+        r.getMessage() for r in caplog.records if "No events for query" in r.message
+    ]
+    assert len(logs) >= 2, logs
+    first, second = logs[:2]
+    assert "(probe 1)" in first
+    assert "(probe 2, previous probe unanswered)" in second
+    logged = float(re.search(r" in ([0-9.]+)s while ", second).group(1))
+    # Probe 1 goes out N after the last event, probe 2 a further 2N later: the
+    # silence is >= 3N, not the 2N since probe 1.
+    assert logged >= SLOW_PROBE * 3 - 0.05, logged
+    # Loose on purpose: the >= 3N check above is what catches a regression;
+    # this only confirms the figure tracks the measured silence.
+    assert abs(logged - (second_probe_at - last_event)) < SLOW_PROBE, logged
 
 
 def test_successive_probes_back_off_to_a_cap():
@@ -572,6 +600,40 @@ def test_invalid_probe_interval_disables_watchdog(value, caplog):
         time.sleep(PROBE * 3)
         assert session.requests("retrieve_results") == []
         assert tracked(conn, execution_id) is not None
+    finally:
+        conn.close()
+
+
+class _BadRepr:
+    def __repr__(self):
+        raise RuntimeError("no repr")
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(0, "(0)"), (-5, "(-5)"), (_BadRepr(), "(<unrepresentable _BadRepr>)")],
+)
+def test_invalid_probe_interval_warning_names_the_value(value, expected, caplog):
+    conn = connect(Session(), stale_query_probe_seconds=value)
+    try:
+        assert conn._Connection__probe_after is None
+        warnings = [r.getMessage() for r in caplog.records if "disabled" in r.message]
+        assert warnings == [
+            f"Invalid stale_query_probe_seconds {expected}; "
+            "stale-query probes disabled."
+        ]
+    finally:
+        conn.close()
+
+
+def test_invalid_probe_interval_warning_truncates_a_huge_value(caplog):
+    conn = connect(Session(), stale_query_probe_seconds=10**400)
+    try:
+        assert conn._Connection__probe_after is None
+        (warning,) = [r.getMessage() for r in caplog.records if "disabled" in r.message]
+        quoted = re.search(r"\((.*)\);", warning).group(1)
+        assert quoted.startswith("1000") and quoted.endswith("...")
+        assert len(quoted) <= 80
     finally:
         conn.close()
 

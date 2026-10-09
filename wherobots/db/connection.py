@@ -125,16 +125,46 @@ def _probe_interval(value: Any) -> float | None:
         return None
 
 
+_INVALID_VALUE_REPR_CHARS = 80
+"""Longest repr of an invalid setting that a warning quotes."""
+
+
+def _describe_invalid(value: Any) -> str:
+    """A bounded ``repr`` of ``value`` for a warning. Never raises ``Exception``.
+
+    Truncated so a huge value (``10**400``) can't flood the log; falls back to
+    the type name if ``repr`` fails, since this runs in the constructor.
+    """
+    try:
+        text = repr(value)
+    except Exception:
+        try:
+            return f"<unrepresentable {type(value).__name__}>"
+        except Exception:
+            return "<unrepresentable>"
+    if len(text) > _INVALID_VALUE_REPR_CHARS:
+        text = text[: _INVALID_VALUE_REPR_CHARS - 3] + "..."
+    return text
+
+
 @dataclass
 class _Watch:
     """Stale-query watchdog bookkeeping for one query.
 
     Only the reader thread touches it once the query is registered; ``__send``
-    stamps ``last_activity`` under ``__lock`` just before registration.
+    stamps ``last_activity`` and ``last_event`` under ``__lock`` just before
+    registration.
     """
 
     last_activity: float = field(default_factory=time.monotonic)
-    """``time.monotonic()`` of the last inbound event (or probe) for the query."""
+    """``time.monotonic()`` of the last inbound event (or probe) for the query.
+
+    Spaces the probes; see ``last_event`` for the true silence."""
+    last_event: float = field(default_factory=time.monotonic)
+    """``time.monotonic()`` of the last inbound event (or registration).
+
+    Unlike ``last_activity``, probes don't update it, so the probe log reports
+    how long the query has really been silent."""
     probes_sent: int = 0
     """Probes sent since the last event that wasn't a reply to a retrieve."""
     probe_outstanding: bool = False
@@ -191,7 +221,7 @@ class Connection:
         if self.__probe_after is None and stale_query_probe_seconds is not None:
             logging.warning(
                 "Invalid stale_query_probe_seconds (%s); stale-query probes disabled.",
-                type(stale_query_probe_seconds).__name__,
+                _describe_invalid(stale_query_probe_seconds),
             )
         self.__next_stale_check = 0.0
         # recv() must wake up for the watchdog's checks, also when the caller
@@ -358,6 +388,10 @@ class Connection:
                     # behind it: that would stop recv() for every query. The
                     # lock is busy for the rest too; retry at the next check.
                     break
+                # Replies to a retrieve and state_updated clear the flag;
+                # progress doesn't. Still set means the last probe went
+                # unanswered.
+                unanswered = watch.probe_outstanding
                 watch.probes_sent += 1
                 watch.probe_outstanding = True
                 watch.results_probed = watch.results_requested
@@ -365,11 +399,12 @@ class Connection:
                 watch.last_activity = now
                 logging.info(
                     "No events for query %s in %.1fs while %s; probed the SQL "
-                    "session for its state (probe %d).",
+                    "session for its state (probe %d%s).",
                     query.execution_id,
-                    silence,
+                    now - watch.last_event,
                     query.state,
                     watch.probes_sent,
+                    ", previous probe unanswered" if unanswered else "",
                 )
         except Exception:
             logging.exception("Stale-query probe failed")
@@ -466,7 +501,7 @@ class Connection:
         if query is not None:
             watch = query.watch
             # Any inbound event, progress included, shows the query is alive.
-            watch.last_activity = time.monotonic()
+            watch.last_activity = watch.last_event = time.monotonic()
             if kind == EventKind.EXECUTION_RESULT or kind == EventKind.ERROR:
                 # A reply to a retrieve_results, which may be our own probe: it
                 # resets the timer but not the backoff, so a long-running
@@ -651,9 +686,12 @@ class Connection:
                 and not query.watch.results_requested
                 and query.state != ExecutionState.FAILED
             ):
-                # The session evicted the query from its cache, but it may well
-                # still be running; its terminal event will still arrive. After
-                # the normal retrieve, though, there's nothing left to wait for.
+                # The session evicted the query from its cache. If the query is
+                # still running, its terminal event will still arrive; if that
+                # event was already lost, nothing more can be done (still
+                # running and finished-with-a-lost-event look the same from
+                # here), so keep waiting either way. After the normal
+                # retrieve, though, there's nothing left to wait for.
                 query.watch.probeable = False
                 logging.warning(
                     "SQL session no longer tracks execution %s (likely evicted "
@@ -714,7 +752,8 @@ class Connection:
                     return True
                 if query is not None:
                     # The watchdog's clock starts at registration.
-                    query.watch.last_activity = time.monotonic()
+                    watch = query.watch
+                    watch.last_activity = watch.last_event = time.monotonic()
                     self.__queries[query.execution_id] = query
                 elif message.get("execution_id") not in self.__queries:
                     return True
