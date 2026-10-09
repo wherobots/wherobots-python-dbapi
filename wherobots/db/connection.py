@@ -17,7 +17,7 @@ import websockets.exceptions
 import websockets.sync.client
 
 from .constants import DEFAULT_READ_TIMEOUT_SECONDS, DEFAULT_STALE_QUERY_PROBE_SECONDS
-from ._transport import abort_connection
+from ._transport import abort_connection, socket_writable
 from .cursor import Cursor
 from .errors import NotSupportedError, OperationalError
 from .models import ExecutionResult, ProgressInfo, Store, StoreResult
@@ -387,9 +387,10 @@ class Connection:
                 if silence < wait:
                     continue
                 if not self.__request_results(query.execution_id, probe=True):
-                    # A user thread is sending, possibly stalled. Don't wait
-                    # behind it: that would stop recv() for every query. The
-                    # lock is busy for the rest too; retry at the next check.
+                    # A user thread is sending, possibly stalled, or the
+                    # socket can't take a write. Don't wait: that would stop
+                    # recv() for every query. Either holds for the rest too;
+                    # retry at the next check.
                     break
                 # Only a reply to a retrieve clears the flag; other events,
                 # state_updated included, don't. Still set means the last
@@ -738,7 +739,11 @@ class Connection:
         query: Query | None = None,
         blocking: bool = True,
     ) -> bool:
-        """Send a request; return ``False`` only if non-blocking and busy."""
+        """Send a request; return ``False`` only if non-blocking and busy.
+
+        Busy means another sender holds the send lock, or the socket's send
+        buffer is full.
+        """
         # Serialization and redaction are local work. Fail before registration,
         # without poisoning unrelated cursors or misreporting a transport loss.
         request = json.dumps(message)
@@ -762,6 +767,15 @@ class Connection:
                     self.__queries[query.execution_id] = query
                 elif message.get("execution_id") not in self.__queries:
                     return True
+            # A non-blocking send runs on the reader thread (a probe). Not
+            # waiting for the lock isn't enough: with the socket's send buffer
+            # full (a peer that keeps sending but stops reading), ws.send()
+            # itself would block, stopping recv() for every query, and would
+            # hold the library's protocol mutex, which keepalive pings need
+            # too. Treat it like a busy lock: skip, and retry at the next
+            # check. Checked outside __lock: it's a syscall on the transport.
+            if not blocking and not socket_writable(self.__ws):
+                return False
             try:
                 self.__ws.send(request)
             except (websockets.exceptions.ConnectionClosed, OSError):
@@ -852,7 +866,8 @@ class Connection:
     def __request_results(self, execution_id: str, probe: bool = False) -> bool:
         """Send retrieve_results; ``False`` if a probe found the sender busy.
 
-        A probe never waits for ``__send_lock`` (see ``__probe_stale_queries``).
+        A probe never waits for ``__send_lock`` or a full socket (see
+        ``__probe_stale_queries`` and ``__send``).
         """
         query = self.__queries.get(execution_id)
         if not query:

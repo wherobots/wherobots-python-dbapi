@@ -2,8 +2,10 @@
 
 import json
 import logging
+import os
 import queue
 import re
+import socket
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -12,6 +14,7 @@ import cbor2
 import pytest
 from websockets.exceptions import ConnectionClosedOK
 
+from wherobots.db._transport import socket_writable
 from wherobots.db.connection import Connection
 from wherobots.db.driver import connect_direct
 from wherobots.db.errors import OperationalError
@@ -581,6 +584,127 @@ def test_stalled_user_send_does_not_hold_up_other_results():
     finally:
         release.set()
         conn.close()
+
+
+def fill_send_buffer(sock):
+    """Write to ``sock`` until its send buffer is full; restore its timeout."""
+    timeout = sock.gettimeout()
+    sock.setblocking(False)
+    try:
+        # Large writes first, then single bytes: some kernels accept a last
+        # partial write.
+        for chunk in (b"x" * 65536, b"x"):
+            try:
+                while True:
+                    sock.send(chunk)
+            except BlockingIOError:
+                pass
+    finally:
+        sock.settimeout(timeout)
+
+
+class SocketSession(Session):
+    """A fake session whose requests are written to a real socket.
+
+    Like websockets' sync client, ``send`` blocks while the socket's send
+    buffer is full (bounded here, so a regression fails instead of hanging).
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.socket, self.peer = socket.socketpair()
+        self.socket.settimeout(5)
+        self.before_send = lambda message: self.socket.sendall(
+            json.dumps(message).encode()
+        )
+
+    def fill(self):
+        """Fill the send buffer, as a peer that stops reading would."""
+        fill_send_buffer(self.socket)
+
+    def drain(self):
+        self.peer.setblocking(False)
+        try:
+            while self.peer.recv(1 << 20):
+                pass
+        except BlockingIOError:
+            pass
+
+    def dispose(self):
+        self.socket.close()
+        self.peer.close()
+
+
+def test_probe_skips_a_full_socket_instead_of_stalling_the_reader():
+    session = SocketSession()
+    conn = connect(session)
+    try:
+        _, quiet = execute(conn, session)
+        cursor, ready = execute(conn, session, sql="SELECT 2")
+        session.fill()
+        assert not socket_writable(session)
+        # Let a probe for the quiet query come due while the socket is full.
+        time.sleep(PROBE * 3)
+        started = time.monotonic()
+        session.put(kind="state_updated", execution_id=ready, state="cancelled")
+        result = results_of(cursor).get(timeout=3)
+        delay = time.monotonic() - started
+        assert result.error is None
+        assert delay < 1.0, delay
+        assert session.probe_times(quiet) == []
+        assert tracked(conn, quiet) is not None
+        # The skipped probe goes out once the peer reads again.
+        session.drain()
+        assert wait_until(lambda: session.probe_times(quiet))
+    finally:
+        conn.close()
+        session.dispose()
+
+
+def test_socket_writable_proceeds_without_a_real_socket():
+    # A failure must not disable probing: anything unusable counts as writable.
+    assert socket_writable(Session())  # MagicMock socket
+    assert socket_writable(object())  # No socket at all
+
+    class Broken:
+        @property
+        def socket(self):
+            raise RuntimeError("no socket")
+
+    assert socket_writable(Broken())
+    closed = MagicMock()
+    closed.socket, peer = socket.socketpair()
+    closed.socket.close()
+    peer.close()
+    assert socket_writable(closed)
+
+
+def test_socket_writable_handles_fds_above_fd_setsize():
+    # select.select() rejects fds >= FD_SETSIZE (1024); a server holding many
+    # connections reaches them.
+    resource = pytest.importorskip("resource")  # POSIX-only
+    target = 2048
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft <= target:
+        if hard != resource.RLIM_INFINITY and hard <= target:
+            pytest.skip("RLIMIT_NOFILE too low for a high fd")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target + 1, hard))
+    a, b = socket.socketpair()
+    high = None
+    try:
+        os.dup2(a.fileno(), target)
+        high = socket.socket(fileno=target)
+        ws = MagicMock()
+        ws.socket = high
+        assert socket_writable(ws)
+        fill_send_buffer(high)
+        assert not socket_writable(ws)
+    finally:
+        if high is not None:
+            high.close()
+        a.close()
+        b.close()
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
 
 
 def test_recovery_is_logged_only_for_a_successful_probe_reply(caplog):
