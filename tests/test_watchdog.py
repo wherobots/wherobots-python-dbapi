@@ -451,6 +451,40 @@ def test_progress_while_probe_outstanding_does_not_unmask_not_found(caplog):
         conn.close()
 
 
+def test_running_state_update_while_probe_outstanding_does_not_unmask_not_found(
+    caplog,
+):
+    # An evicted query that is still running: a genuine state_updated: running
+    # can arrive between the probe and its not-found reply. The reply is still
+    # the probe's and must not fail the query.
+    def on_probe(s, m):
+        s.put(kind="state_updated", execution_id=m["execution_id"], state="running")
+        s.put(kind="error", execution_id=m["execution_id"], message=NOT_FOUND)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert wait_until(lambda: "no longer tracks execution" in caplog.text)
+        time.sleep(PROBE * 8)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is not None
+        # Not probeable any more: no further probes.
+        assert len(session.probe_times()) == 1
+        session.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=3,
+        )
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.store_result.result_uri == RESULT_URI
+    finally:
+        conn.close()
+
+
 def test_not_found_for_the_normal_results_request_still_fails():
     # After the genuine state_updated: succeeded, there is no other terminal
     # event to wait for: a not-found reply fails the query, as without the

@@ -168,7 +168,10 @@ class _Watch:
     probes_sent: int = 0
     """Probes sent since the last event that wasn't a reply to a retrieve."""
     probe_outstanding: bool = False
-    """A probe was sent and no reply to a retrieve has arrived since."""
+    """A probe was sent and no reply to a retrieve has arrived since.
+
+    Other events, a non-terminal ``state_updated`` included, leave it set: they
+    don't answer the probe, whose reply may still be on its way."""
     probeable: bool = True
     """False once the session has said it can't answer probes for the query."""
     results_requested: bool = False
@@ -388,9 +391,9 @@ class Connection:
                     # behind it: that would stop recv() for every query. The
                     # lock is busy for the rest too; retry at the next check.
                     break
-                # Replies to a retrieve and state_updated clear the flag;
-                # progress doesn't. Still set means the last probe went
-                # unanswered.
+                # Only a reply to a retrieve clears the flag; other events,
+                # state_updated included, don't. Still set means the last
+                # probe went unanswered.
                 unanswered = watch.probe_outstanding
                 watch.probes_sent += 1
                 watch.probe_outstanding = True
@@ -509,9 +512,11 @@ class Connection:
                 probe_reply = watch.probe_outstanding
                 watch.probe_outstanding = False
             else:
+                # A genuine event resets the backoff, but leaves an outstanding
+                # probe outstanding: a non-terminal state_updated can arrive
+                # between a probe and its reply, which must still be
+                # recognised as the probe's (see the not-found guard below).
                 watch.probes_sent = 0
-                if kind == EventKind.STATE_UPDATED:
-                    watch.probe_outstanding = False
 
         # Progress events are independent of the query state machine and don't
         # require a tracked query — the handler is connection-level.
