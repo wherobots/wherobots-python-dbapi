@@ -75,6 +75,23 @@ class TestConnectRegionRuntime:
         )
         assert kwargs["session_id"] == "test-id"
 
+    @pytest.mark.parametrize("probe_seconds", [None, 5.0])
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_stale_query_probe_seconds_is_forwarded(
+        self, mock_post, mock_get, probe_seconds
+    ):
+        _, kwargs = _run_connect_full(
+            mock_post, mock_get, stale_query_probe_seconds=probe_seconds
+        )
+        assert kwargs["stale_query_probe_seconds"] == probe_seconds
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_stale_query_probes_default_to_30_seconds(self, mock_post, mock_get):
+        _, kwargs = _run_connect_full(mock_post, mock_get)
+        assert kwargs["stale_query_probe_seconds"] == 30.0
+
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
     def test_omitted_region_runtime_not_sent(self, mock_post, mock_get):

@@ -1,0 +1,808 @@
+"""The stale-query watchdog re-asks the session when a terminal event is lost."""
+
+import json
+import logging
+import os
+import queue
+import re
+import socket
+import threading
+import time
+from unittest.mock import MagicMock, patch
+
+import cbor2
+import pytest
+from websockets.exceptions import ConnectionClosedOK
+
+from wherobots.db._transport import socket_writable
+from wherobots.db.connection import Connection
+from wherobots.db.driver import connect_direct
+from wherobots.db.errors import OperationalError
+from wherobots.db.models import Store
+from wherobots.db.types import ExecutionState, ResultsFormat, StorageFormat
+
+PROBE = 0.05
+"""Probe interval used throughout: small, so the tests stay fast."""
+
+SLOW_PROBE = 0.2
+"""For assertions that something does *not* happen within N: a larger N, so a
+briefly stalled test thread on a loaded runner can't produce a false probe."""
+
+NOT_FOUND = "Execution not found"
+
+READ_TIMEOUT = 0.01
+
+STORE = Store.for_download(format=StorageFormat.PARQUET)
+
+RESULT_URI = "https://presigned.example.com/results.parquet"
+
+
+class Session:
+    """A fake SQL session transport.
+
+    Records every request with its send time, and lets a test answer probes
+    (``retrieve_results`` requests) through ``on_probe``. ``before_send`` runs
+    before a request is recorded, so a test can stall a send.
+    """
+
+    def __init__(self, on_probe=None):
+        self.incoming = queue.Queue()
+        self.sent = []
+        self.on_probe = on_probe
+        self.before_send = None
+        self.close_timeout = 1.0
+        self.socket = MagicMock()
+        self.socket.shutdown.side_effect = lambda how: self.close()
+
+    def recv(self, timeout):
+        try:
+            value = self.incoming.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError from None
+        if isinstance(value, Exception):
+            raise value
+        if isinstance(value, bytes):
+            return value
+        return json.dumps(value)
+
+    def send(self, value):
+        message = json.loads(value)
+        if self.before_send is not None:
+            self.before_send(message)
+        self.sent.append((time.monotonic(), message))
+        if message["kind"] == "retrieve_results" and self.on_probe is not None:
+            self.on_probe(self, message)
+
+    def close(self):
+        self.incoming.put(ConnectionClosedOK(None, None))
+
+    def put(self, **message):
+        self.incoming.put(message)
+
+    def requests(self, kind, execution_id=None):
+        return [
+            (sent_at, message)
+            for sent_at, message in list(self.sent)
+            if message["kind"] == kind
+            and (execution_id is None or message["execution_id"] == execution_id)
+        ]
+
+    def probe_times(self, execution_id=None):
+        return [t for t, _ in self.requests("retrieve_results", execution_id)]
+
+
+def wait_until(predicate, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
+
+
+def connect(session, **kwargs):
+    kwargs.setdefault("stale_query_probe_seconds", PROBE)
+    return Connection(session, read_timeout=READ_TIMEOUT, **kwargs)
+
+
+def execute(conn, session, sql="SELECT 1", store=None):
+    """Start a query that the session reports as running, then goes quiet."""
+    cursor = conn.cursor()
+    cursor.execute(sql, store=store)
+    execution_id = session.requests("execute_sql")[-1][1]["execution_id"]
+    session.put(kind="state_updated", execution_id=execution_id, state="running")
+    return cursor, execution_id
+
+
+def results_of(cursor):
+    return cursor._Cursor__queue
+
+
+def tracked(conn, execution_id):
+    return conn._Connection__queries.get(execution_id)
+
+
+def reply(session, execution_id, state="succeeded", **fields):
+    session.put(
+        kind="execution_result",
+        execution_id=execution_id,
+        state=state,
+        results=None,
+        **fields,
+    )
+
+
+def test_probe_reply_with_result_uri_completes_store_query(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session(
+        on_probe=lambda s, m: reply(
+            s, m["execution_id"], result_uri=RESULT_URI, size=42
+        )
+    )
+    conn = connect(session)
+    try:
+        # The terminal state_updated is never delivered.
+        cursor, execution_id = execute(conn, session, store=STORE)
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.store_result.result_uri == RESULT_URI
+        assert result.store_result.size == 42
+        assert tracked(conn, execution_id) is None
+        assert len(session.probe_times()) == 1
+        assert f"No events for query {execution_id}" in caplog.text
+        assert f"Query {execution_id} recovered" in caplog.text
+    finally:
+        conn.close()
+
+
+def test_store_query_succeeded_without_result_uri_keeps_waiting(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session(on_probe=lambda s, m: reply(s, m["execution_id"]))
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert wait_until(lambda: "no result location" in caplog.text)
+        warnings = [r for r in caplog.records if "no result location" in r.message]
+        assert warnings[0].levelno == logging.WARNING
+        # Not completed empty, and not re-probed: the answer wouldn't change.
+        time.sleep(PROBE * 8)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id).state == ExecutionState.SUCCEEDED
+        assert len(session.probe_times()) == 1
+        # The genuine terminal event still completes it.
+        session.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=7,
+        )
+        assert results_of(cursor).get(timeout=3).store_result.result_uri == RESULT_URI
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("late_event_first", [True, False])
+def test_late_state_updated_racing_probe_reply_delivers_once(late_event_first):
+    def on_probe(s, m):
+        late = dict(
+            kind="state_updated",
+            execution_id=m["execution_id"],
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=1,
+        )
+        probe_reply = dict(
+            kind="execution_result",
+            execution_id=m["execution_id"],
+            state="succeeded",
+            results=None,
+            result_uri=RESULT_URI,
+            size=1,
+        )
+        for message in (late, probe_reply) if late_event_first else (probe_reply, late):
+            s.incoming.put(message)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert results_of(cursor).get(timeout=3).store_result.result_uri == RESULT_URI
+        assert wait_until(session.incoming.empty)
+        time.sleep(PROBE * 4)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is None
+        assert len(session.probe_times()) == 1
+    finally:
+        conn.close()
+
+
+def test_disabled_watchdog_never_probes():
+    session = Session()
+    conn = connect(session, stale_query_probe_seconds=None)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        time.sleep(PROBE * 8)
+        assert session.requests("retrieve_results") == []
+        assert tracked(conn, execution_id) is not None
+    finally:
+        conn.close()
+
+
+def test_steady_traffic_for_one_query_does_not_starve_anothers_watchdog():
+    # read_timeout is well above the progress cadence, so recv() never times
+    # out while B is streaming.
+    session = Session()
+    conn = Connection(session, read_timeout=0.5, stale_query_probe_seconds=SLOW_PROBE)
+    stop = threading.Event()
+    try:
+        _, quiet = execute(conn, session)
+        _, busy = execute(conn, session)
+
+        def stream_progress():
+            while not stop.is_set():
+                session.put(kind="execution_progress", execution_id=busy)
+                time.sleep(0.005)
+
+        streamer = threading.Thread(target=stream_progress, daemon=True)
+        streamer.start()
+        assert wait_until(lambda: session.probe_times(quiet), timeout=2)
+        # Progress events are activity: the busy query is never probed.
+        assert session.probe_times(busy) == []
+    finally:
+        stop.set()
+        conn.close()
+
+
+def test_unanswered_probe_log_reports_silence_since_the_last_event(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session()  # Never answers probes.
+    conn = connect(session, stale_query_probe_seconds=SLOW_PROBE)
+    try:
+        _, execution_id = execute(conn, session)
+        assert wait_until(lambda: len(session.probe_times()) >= 2, timeout=5)
+        last_event = tracked(conn, execution_id).watch.last_event
+        second_probe_at = session.probe_times()[1]
+    finally:
+        conn.close()
+    logs = [
+        r.getMessage() for r in caplog.records if "No events for query" in r.message
+    ]
+    assert len(logs) >= 2, logs
+    first, second = logs[:2]
+    assert "(probe 1)" in first
+    assert "(probe 2, previous probe unanswered)" in second
+    logged = float(re.search(r" in ([0-9.]+)s while ", second).group(1))
+    # Probe 1 goes out N after the last event, probe 2 a further 2N later: the
+    # silence is >= 3N, not the 2N since probe 1.
+    assert logged >= SLOW_PROBE * 3 - 0.05, logged
+    # Loose on purpose: the >= 3N check above is what catches a regression;
+    # this only confirms the figure tracks the measured silence.
+    assert abs(logged - (second_probe_at - last_event)) < SLOW_PROBE, logged
+
+
+def test_successive_probes_back_off_to_a_cap():
+    session = Session(
+        on_probe=lambda s, m: reply(s, m["execution_id"], state="running")
+    )
+    conn = connect(session)
+    try:
+        _, execution_id = execute(conn, session)
+        registered = session.requests("execute_sql")[0][0]
+        assert wait_until(lambda: len(session.probe_times()) >= 5, timeout=10)
+        times = session.probe_times()[:5]
+        assert times[0] - registered >= PROBE
+        gaps = [later - earlier for earlier, later in zip(times, times[1:])]
+        # N, then 2N, 4N, 8N, capped at 8N; never a tight loop. The upper
+        # bound (next doubling) still tells each step, and the cap, apart.
+        for gap, expected in zip(gaps, [2, 4, 8, 8]):
+            assert PROBE * expected <= gap < PROBE * expected * 2, gaps
+    finally:
+        conn.close()
+
+
+def test_probe_recovers_non_store_query_and_requests_configured_format():
+    rows = b'[{"x": 1}, {"x": 2}]'
+
+    def on_probe(s, m):
+        s.incoming.put(
+            cbor2.dumps(
+                {
+                    "kind": "execution_result",
+                    "execution_id": m["execution_id"],
+                    "state": "succeeded",
+                    "results": {"result_bytes": rows, "format": "json"},
+                }
+            )
+        )
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session, results_format=ResultsFormat.JSON)
+    try:
+        cursor, execution_id = execute(conn, session)
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.results == [{"x": 1}, {"x": 2}]
+        (_, probe), *_ = session.requests("retrieve_results")
+        assert probe == {
+            "kind": "retrieve_results",
+            "execution_id": execution_id,
+            "format": "json",
+        }
+    finally:
+        conn.close()
+
+
+def test_lost_retrieve_results_reply_is_re_requested():
+    asked = []
+
+    def on_probe(s, m):
+        # Lose the reply to the driver's own request; answer the probe.
+        asked.append(m)
+        if len(asked) > 1:
+            s.incoming.put(
+                cbor2.dumps(
+                    {
+                        "kind": "execution_result",
+                        "execution_id": m["execution_id"],
+                        "state": "succeeded",
+                        "results": {"result_bytes": b"[]", "format": "json"},
+                    }
+                )
+            )
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        session.put(kind="state_updated", execution_id=execution_id, state="succeeded")
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.results == []
+        assert len(asked) == 2
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("state", ["running", "pending"])
+def test_non_terminal_probe_reply_keeps_waiting_and_probing(state):
+    session = Session(on_probe=lambda s, m: reply(s, m["execution_id"], state=state))
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        assert wait_until(lambda: len(session.probe_times()) >= 2)
+        query = tracked(conn, execution_id)
+        assert query is not None
+        assert query.state == ExecutionState[state.upper()]
+        assert results_of(cursor).empty()
+        # The probe replies aren't events of their own: backoff keeps growing.
+        first, second = session.probe_times()[:2]
+        assert second - first >= PROBE * 2
+    finally:
+        conn.close()
+
+
+def test_genuine_events_postpone_probes_and_reset_backoff():
+    session = Session(
+        on_probe=lambda s, m: reply(s, m["execution_id"], state="running")
+    )
+    conn = connect(session, stale_query_probe_seconds=SLOW_PROBE)
+    try:
+        _, execution_id = execute(conn, session)
+        assert wait_until(lambda: len(session.probe_times()) >= 2)
+        query = tracked(conn, execution_id)
+        assert wait_until(lambda: query.watch.probes_sent >= 2)
+        # Progress is activity: no probes while it flows, and backoff resets.
+        deadline = time.monotonic() + SLOW_PROBE * 4
+        probes_before = len(session.probe_times())
+        while time.monotonic() < deadline:
+            session.put(kind="execution_progress", execution_id=execution_id)
+            time.sleep(SLOW_PROBE / 5)
+        assert wait_until(lambda: query.watch.probes_sent == 0, timeout=1)
+        assert len(session.probe_times()) == probes_before
+    finally:
+        conn.close()
+
+
+def test_probe_not_found_keeps_waiting_for_an_evicted_query(caplog):
+    # The session's small LRU cache can evict a query that is still running.
+    # Its terminal state_updated still arrives (from the future's callback),
+    # but a probe gets "Execution not found". That must not fail the query.
+    session = Session(
+        on_probe=lambda s, m: s.put(
+            kind="error", execution_id=m["execution_id"], message=NOT_FOUND
+        )
+    )
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert wait_until(lambda: "no longer tracks execution" in caplog.text)
+        time.sleep(PROBE * 8)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is not None
+        # Not probeable any more: no further probes.
+        assert len(session.probe_times()) == 1
+        session.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=3,
+        )
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.store_result.result_uri == RESULT_URI
+    finally:
+        conn.close()
+
+
+def test_progress_while_probe_outstanding_does_not_unmask_not_found(caplog):
+    # A progress event between the probe and its reply must not make the
+    # not-found reply look like an answer to a normal request.
+    def on_probe(s, m):
+        s.put(kind="execution_progress", execution_id=m["execution_id"])
+        s.put(kind="error", execution_id=m["execution_id"], message=NOT_FOUND)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        assert wait_until(lambda: "no longer tracks execution" in caplog.text)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is not None
+    finally:
+        conn.close()
+
+
+def test_running_state_update_while_probe_outstanding_does_not_unmask_not_found(
+    caplog,
+):
+    # An evicted query that is still running: a genuine state_updated: running
+    # can arrive between the probe and its not-found reply. The reply is still
+    # the probe's and must not fail the query.
+    def on_probe(s, m):
+        s.put(kind="state_updated", execution_id=m["execution_id"], state="running")
+        s.put(kind="error", execution_id=m["execution_id"], message=NOT_FOUND)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session, store=STORE)
+        assert wait_until(lambda: "no longer tracks execution" in caplog.text)
+        time.sleep(PROBE * 8)
+        assert results_of(cursor).empty()
+        assert tracked(conn, execution_id) is not None
+        # Not probeable any more: no further probes.
+        assert len(session.probe_times()) == 1
+        session.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=3,
+        )
+        result = results_of(cursor).get(timeout=3)
+        assert result.error is None
+        assert result.store_result.result_uri == RESULT_URI
+    finally:
+        conn.close()
+
+
+def test_not_found_for_the_normal_results_request_still_fails():
+    # After the genuine state_updated: succeeded, there is no other terminal
+    # event to wait for: a not-found reply fails the query, as without the
+    # watchdog.
+    session = Session(
+        on_probe=lambda s, m: s.put(
+            kind="error", execution_id=m["execution_id"], message=NOT_FOUND
+        )
+    )
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        session.put(kind="state_updated", execution_id=execution_id, state="succeeded")
+        error = results_of(cursor).get(timeout=3).error
+        assert isinstance(error, OperationalError)
+        assert NOT_FOUND in str(error)
+        assert tracked(conn, execution_id) is None
+    finally:
+        conn.close()
+
+
+def test_not_found_after_results_requested_probe_still_fails():
+    # The normal retrieve's reply is lost, and the one probe that follows it
+    # gets not-found: the terminal event has already arrived, so fail.
+    asked = []
+
+    def on_probe(s, m):
+        asked.append(m)
+        if len(asked) > 1:
+            s.put(kind="error", execution_id=m["execution_id"], message=NOT_FOUND)
+
+    session = Session(on_probe=on_probe)
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        session.put(kind="state_updated", execution_id=execution_id, state="succeeded")
+        error = results_of(cursor).get(timeout=3).error
+        assert isinstance(error, OperationalError)
+        assert NOT_FOUND in str(error)
+        assert len(asked) == 2
+    finally:
+        conn.close()
+
+
+def test_results_requested_gets_one_probe_no_earlier_than_4n():
+    session = Session()
+    conn = connect(session)
+    try:
+        _, execution_id = execute(conn, session)
+        session.put(kind="state_updated", execution_id=execution_id, state="succeeded")
+        assert wait_until(lambda: len(session.probe_times()) >= 2)
+        requested, probed = session.probe_times()
+        assert probed - requested >= PROBE * 4
+        # Never a second probe: duplicate retrieves re-send the full result.
+        time.sleep(PROBE * 16)
+        assert len(session.probe_times()) == 2
+    finally:
+        conn.close()
+
+
+def test_stalled_user_send_does_not_hold_up_other_results():
+    session = Session()
+    conn = connect(session)
+    sending, release = threading.Event(), threading.Event()
+
+    def stall_new_queries(message):
+        if message["kind"] == "execute_sql" and message["statement"] == "SLOW":
+            sending.set()
+            release.wait(timeout=5)
+
+    try:
+        _, quiet = execute(conn, session)
+        cursor, ready = execute(conn, session, sql="SELECT 2")
+        session.before_send = stall_new_queries
+        sender = threading.Thread(target=conn.cursor().execute, args=("SLOW",))
+        sender.start()
+        assert sending.wait(timeout=1)
+        # Let a probe for the quiet query come due while the send is stalled.
+        time.sleep(PROBE * 3)
+        started = time.monotonic()
+        session.put(
+            kind="state_updated",
+            execution_id=ready,
+            state="cancelled",
+        )
+        result = results_of(cursor).get(timeout=3)
+        delay = time.monotonic() - started
+        release.set()
+        sender.join(timeout=3)
+        assert result.error is None
+        assert delay < 1.0, delay
+        # The skipped probe goes out once the send lock is free.
+        assert wait_until(lambda: session.probe_times(quiet))
+    finally:
+        release.set()
+        conn.close()
+
+
+def fill_send_buffer(sock):
+    """Write to ``sock`` until its send buffer is full; restore its timeout."""
+    timeout = sock.gettimeout()
+    sock.setblocking(False)
+    try:
+        # Large writes first, then single bytes: some kernels accept a last
+        # partial write.
+        for chunk in (b"x" * 65536, b"x"):
+            try:
+                while True:
+                    sock.send(chunk)
+            except BlockingIOError:
+                pass
+    finally:
+        sock.settimeout(timeout)
+
+
+class SocketSession(Session):
+    """A fake session whose requests are written to a real socket.
+
+    Like websockets' sync client, ``send`` blocks while the socket's send
+    buffer is full (bounded here, so a regression fails instead of hanging).
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.socket, self.peer = socket.socketpair()
+        self.socket.settimeout(5)
+        self.before_send = lambda message: self.socket.sendall(
+            json.dumps(message).encode()
+        )
+
+    def fill(self):
+        """Fill the send buffer, as a peer that stops reading would."""
+        fill_send_buffer(self.socket)
+
+    def drain(self):
+        self.peer.setblocking(False)
+        try:
+            while self.peer.recv(1 << 20):
+                pass
+        except BlockingIOError:
+            pass
+
+    def dispose(self):
+        self.socket.close()
+        self.peer.close()
+
+
+def test_probe_skips_a_full_socket_instead_of_stalling_the_reader():
+    session = SocketSession()
+    conn = connect(session)
+    try:
+        _, quiet = execute(conn, session)
+        cursor, ready = execute(conn, session, sql="SELECT 2")
+        session.fill()
+        assert not socket_writable(session)
+        # Let a probe for the quiet query come due while the socket is full.
+        time.sleep(PROBE * 3)
+        started = time.monotonic()
+        session.put(kind="state_updated", execution_id=ready, state="cancelled")
+        result = results_of(cursor).get(timeout=3)
+        delay = time.monotonic() - started
+        assert result.error is None
+        assert delay < 1.0, delay
+        assert session.probe_times(quiet) == []
+        assert tracked(conn, quiet) is not None
+        # The skipped probe goes out once the peer reads again.
+        session.drain()
+        assert wait_until(lambda: session.probe_times(quiet))
+    finally:
+        conn.close()
+        session.dispose()
+
+
+def test_socket_writable_proceeds_without_a_real_socket():
+    # A failure must not disable probing: anything unusable counts as writable.
+    assert socket_writable(Session())  # MagicMock socket
+    assert socket_writable(object())  # No socket at all
+
+    class Broken:
+        @property
+        def socket(self):
+            raise RuntimeError("no socket")
+
+    assert socket_writable(Broken())
+    closed = MagicMock()
+    closed.socket, peer = socket.socketpair()
+    closed.socket.close()
+    peer.close()
+    assert socket_writable(closed)
+
+
+def test_socket_writable_handles_fds_above_fd_setsize():
+    # select.select() rejects fds >= FD_SETSIZE (1024); a server holding many
+    # connections reaches them.
+    resource = pytest.importorskip("resource")  # POSIX-only
+    target = 2048
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft <= target:
+        if hard != resource.RLIM_INFINITY and hard <= target:
+            pytest.skip("RLIMIT_NOFILE too low for a high fd")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target + 1, hard))
+    a, b = socket.socketpair()
+    high = None
+    try:
+        os.dup2(a.fileno(), target)
+        high = socket.socket(fileno=target)
+        ws = MagicMock()
+        ws.socket = high
+        assert socket_writable(ws)
+        fill_send_buffer(high)
+        assert not socket_writable(ws)
+    finally:
+        if high is not None:
+            high.close()
+        a.close()
+        b.close()
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+def test_recovery_is_logged_only_for_a_successful_probe_reply(caplog):
+    caplog.set_level(logging.INFO)
+    session = Session(
+        on_probe=lambda s, m: s.incoming.put(
+            cbor2.dumps(
+                {
+                    "kind": "execution_result",
+                    "execution_id": m["execution_id"],
+                    "state": "succeeded",
+                    "results": {"result_bytes": b"not json", "format": "json"},
+                }
+            )
+        )
+    )
+    conn = connect(session)
+    try:
+        cursor, execution_id = execute(conn, session)
+        assert isinstance(results_of(cursor).get(timeout=3).error, OperationalError)
+        assert "recovered" not in caplog.text
+    finally:
+        conn.close()
+
+
+def test_watchdog_runs_when_read_timeout_is_none():
+    # recv() with no timeout would block forever on a quiet connection, which
+    # is exactly the lost-terminal-event shape.
+    session = Session(
+        on_probe=lambda s, m: reply(s, m["execution_id"], state="running")
+    )
+    conn = Connection(session, read_timeout=None, stale_query_probe_seconds=PROBE)
+    try:
+        _, execution_id = execute(conn, session)
+        assert wait_until(lambda: session.probe_times(execution_id))
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, -0.5, float("nan"), float("inf"), float("-inf"), True, "30", object()],
+)
+def test_invalid_probe_interval_disables_watchdog(value, caplog):
+    session = Session()
+    conn = connect(session, stale_query_probe_seconds=value)
+    try:
+        assert "stale-query probes disabled" in caplog.text
+        assert conn._Connection__probe_after is None
+        _, execution_id = execute(conn, session)
+        time.sleep(PROBE * 3)
+        assert session.requests("retrieve_results") == []
+        assert tracked(conn, execution_id) is not None
+    finally:
+        conn.close()
+
+
+class _BadRepr:
+    def __repr__(self):
+        raise RuntimeError("no repr")
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(0, "(0)"), (-5, "(-5)"), (_BadRepr(), "(<unrepresentable _BadRepr>)")],
+)
+def test_invalid_probe_interval_warning_names_the_value(value, expected, caplog):
+    conn = connect(Session(), stale_query_probe_seconds=value)
+    try:
+        assert conn._Connection__probe_after is None
+        warnings = [r.getMessage() for r in caplog.records if "disabled" in r.message]
+        assert warnings == [
+            f"Invalid stale_query_probe_seconds {expected}; "
+            "stale-query probes disabled."
+        ]
+    finally:
+        conn.close()
+
+
+def test_invalid_probe_interval_warning_truncates_a_huge_value(caplog):
+    conn = connect(Session(), stale_query_probe_seconds=10**400)
+    try:
+        assert conn._Connection__probe_after is None
+        (warning,) = [r.getMessage() for r in caplog.records if "disabled" in r.message]
+        quoted = re.search(r"\((.*)\);", warning).group(1)
+        assert quoted.startswith("1000") and quoted.endswith("...")
+        assert len(quoted) <= 80
+    finally:
+        conn.close()
+
+
+def test_connect_direct_forwards_probe_interval():
+    session = Session()
+    target = "wherobots.db.driver.websockets.sync.client.connect"
+    with patch(target, return_value=session):
+        conn = connect_direct("wss://compute/sql", stale_query_probe_seconds=PROBE)
+    try:
+        _, execution_id = execute(conn, session)
+        assert wait_until(lambda: session.probe_times(execution_id))
+    finally:
+        conn.close()

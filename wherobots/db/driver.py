@@ -25,6 +25,7 @@ from .constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
+    DEFAULT_STALE_QUERY_PROBE_SECONDS,
     MAX_MESSAGE_SIZE,
     PARAM_STYLE,
     PROTOCOL_VERSION,
@@ -125,6 +126,7 @@ def connect(
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
     extra_headers: Union[Dict[str, str], None] = None,
+    stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -146,6 +148,12 @@ def connect(
         own ``client=dbapi;ver=<version>`` hop to the right of it. This header
         is advisory only and never affects authentication; ``extra_headers``
         cannot be used to override the ``Authorization``/``X-API-Key`` headers.
+    :param stale_query_probe_seconds: How long a running query may go without
+        any event from the SQL session before the driver re-asks the session
+        for its state, in case its completion event was lost. Later probes
+        back off to at most 8 times this interval. ``None`` disables probing;
+        an invalid value (non-numeric, non-finite, or not positive) also
+        disables it.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -271,6 +279,7 @@ def connect(
         session_id=urllib.parse.urlparse(session_id_url)
         .path.rstrip("/")
         .rsplit("/", 1)[-1],
+        stale_query_probe_seconds=stale_query_probe_seconds,
     )
 
 
@@ -299,7 +308,12 @@ def connect_direct(
     geometry_representation: Union[GeometryRepresentation, None] = None,
     cancel_event: Union[threading.Event, None] = None,
     session_id: str | None = None,
+    stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
 ) -> Connection:
+    """Connect to a SQL session's WebSocket endpoint directly.
+
+    :param stale_query_probe_seconds: See :func:`connect`.
+    """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
     ssl_context.load_verify_locations(certifi.where())
@@ -344,4 +358,5 @@ def connect_direct(
         data_compression=data_compression,
         geometry_representation=geometry_representation,
         session_id=session_id,
+        stale_query_probe_seconds=stale_query_probe_seconds,
     )

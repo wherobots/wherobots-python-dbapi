@@ -582,9 +582,10 @@ def test_concurrent_close_waits_for_a_slow_handshake_to_deliver():
 def test_slow_handshake_does_not_consume_reader_join():
     # The handshake uses most of close_timeout. A long read_timeout keeps the
     # reader parked in recv(), so only the end-of-stream delivered 0.3s after
-    # the handshake wakes it; close() must still be waiting then.
+    # the handshake wakes it; close() must still be waiting then. The watchdog
+    # would cap recv() at its 1s check interval, so it's off here.
     ws = Transport()
-    conn = Connection(ws, read_timeout=10)
+    conn = Connection(ws, read_timeout=10, stale_query_probe_seconds=None)
 
     def slow_close():
         time.sleep(0.9)
