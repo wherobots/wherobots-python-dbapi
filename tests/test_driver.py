@@ -30,20 +30,30 @@ def _run_connect(mock_post, mock_get, **connect_kwargs):
     return kwargs
 
 
-def _mock_ready_session(mock_post, mock_get, session_url=None, redirect_headers=None):
+def _redirect(status_code, headers=None):
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = headers or {}
+    return response
+
+
+def _mock_ready_session(
+    mock_post, mock_get, session_url=None, redirect_headers=None, history=None
+):
     """Answer the session request with a followed 303 and a READY status.
 
     ``redirect_headers`` are the headers of the API's 303 answer, which
-    `requests` keeps in the final response's history.
+    `requests` keeps in the final response's history; ``history`` replaces
+    that whole history.
     """
-    redirect = MagicMock()
-    redirect.status_code = 303
-    redirect.headers = redirect_headers or {}
     post_resp = MagicMock()
     post_resp.status_code = 200
     post_resp.url = session_url or "https://api.example.com/sql/session/test-id"
     post_resp.raise_for_status = MagicMock()
-    post_resp.history = [redirect]
+    post_resp.headers = {}
+    post_resp.history = (
+        history if history is not None else [_redirect(303, redirect_headers)]
+    )
     mock_post.return_value = post_resp
 
     get_resp = MagicMock()
@@ -57,7 +67,12 @@ def _mock_ready_session(mock_post, mock_get, session_url=None, redirect_headers=
 
 
 def _run_connect_full(
-    mock_post, mock_get, session_url=None, redirect_headers=None, **connect_kwargs
+    mock_post,
+    mock_get,
+    session_url=None,
+    redirect_headers=None,
+    history=None,
+    **connect_kwargs,
 ):
     """Drive a successful connect().
 
@@ -65,7 +80,7 @@ def _run_connect_full(
     patched connect_direct) so tests can assert on both the HTTP POST and the
     WebSocket upgrade path.
     """
-    _mock_ready_session(mock_post, mock_get, session_url, redirect_headers)
+    _mock_ready_session(mock_post, mock_get, session_url, redirect_headers, history)
 
     with patch("wherobots.db.driver.connect_direct") as mock_cd:
         mock_cd.return_value = MagicMock()
@@ -111,6 +126,20 @@ class TestConnectSessionKey:
             session_key="waldo:chat-2",
         )
         assert cd_kwargs["session_fallback"] == fallback
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_fallback_is_read_past_an_earlier_redirect(self, mock_post, mock_get):
+        """A 307 to a canonical endpoint before the API's 303 hides nothing."""
+        _, cd_kwargs = _run_connect_full(
+            mock_post,
+            mock_get,
+            history=[
+                _redirect(307),
+                _redirect(303, {"X-Wherobots-Sql-Session-Fallback": "quota"}),
+            ],
+        )
+        assert cd_kwargs["session_fallback"] == "quota"
 
     @patch("wherobots.db.driver.websockets.sync.client.connect")
     @patch("wherobots.db.driver.requests.get")
@@ -230,6 +259,7 @@ class TestConnectCancelEvent:
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
         post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         # GET returns INITIALIZING (triggers TryAgain)
@@ -278,6 +308,7 @@ class TestConnectCancelEvent:
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
         post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         get_resp = MagicMock()
@@ -439,6 +470,7 @@ class TestWherobotsClientHeader:
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
         post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         get_resp = MagicMock()

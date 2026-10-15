@@ -239,9 +239,17 @@ def connect(
     # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
     # session is in READY state.
     session_id_url = resp.url
-    # The fallback header is on the API's redirect, which `requests` followed.
-    answer = resp.history[0] if resp.history else resp
-    session_fallback = answer.headers.get(SESSION_FALLBACK_HEADER) or None
+    # The fallback header is on the API's 303, which `requests` followed. Other
+    # redirects (a 307 or 308 to a canonical endpoint) may come before it, so
+    # every hop is read, latest first.
+    session_fallback = next(
+        (
+            hop.headers[SESSION_FALLBACK_HEADER]
+            for hop in reversed([*resp.history, resp])
+            if hop.headers.get(SESSION_FALLBACK_HEADER)
+        ),
+        None,
+    )
     if session_fallback is not None:
         logging.warning(
             "The API shared a SQL session under another key (%s).", session_fallback
