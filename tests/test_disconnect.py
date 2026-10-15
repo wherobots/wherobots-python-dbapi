@@ -883,3 +883,19 @@ def test_direct_connection_uses_explicit_session_id():
     conn.close()
     with pytest.raises(OperationalError, match="session=session-1"):
         cursor.fetchall()
+
+
+def test_connection_reports_its_session_and_fallback():
+    ws = Transport()
+    conn = Connection(ws, session_id="session-1", session_fallback="quota")
+    try:
+        assert conn.session_id == "session-1"
+        assert conn.session_fallback == "quota"
+    finally:
+        conn.close()
+    plain = Connection(Transport())
+    try:
+        assert plain.session_id is None
+        assert plain.session_fallback is None
+    finally:
+        plain.close()
