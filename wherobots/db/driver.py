@@ -312,6 +312,9 @@ def connect_direct(
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
+    The returned connection's ``reconnect()`` connects to the same endpoint
+    again, with the same arguments (``cancel_event`` included).
+
     :param stale_query_probe_seconds: See :func:`connect`.
     """
     uri_with_protocol = f"{uri}/{protocol}"
@@ -351,6 +354,27 @@ def connect_direct(
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
 
+    # Snapshot a dict of headers, so a reconnect sends what this connection
+    # sent even if the caller later mutates it.
+    reconnect_headers = dict(headers) if isinstance(headers, dict) else headers
+
+    def reconnect() -> Connection:
+        # Straight to the same session's WebSocket: connect() resolves the
+        # session through the REST API, which could start a new session when
+        # this one is gone. A dead session must fail fast instead.
+        return connect_direct(
+            uri=uri,
+            protocol=protocol,
+            headers=reconnect_headers,
+            read_timeout=read_timeout,
+            results_format=results_format,
+            data_compression=data_compression,
+            geometry_representation=geometry_representation,
+            cancel_event=cancel_event,
+            session_id=session_id,
+            stale_query_probe_seconds=stale_query_probe_seconds,
+        )
+
     return Connection(
         ws,
         read_timeout=read_timeout,
@@ -359,4 +383,5 @@ def connect_direct(
         geometry_representation=geometry_representation,
         session_id=session_id,
         stale_query_probe_seconds=stale_query_probe_seconds,
+        reconnect_factory=reconnect,
     )

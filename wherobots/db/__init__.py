@@ -3,7 +3,9 @@ from .cursor import Cursor
 from .driver import connect, connect_direct
 from .errors import (
     Error,
+    ConnectionLostError,
     DatabaseError,
+    ExecutionNotFoundError,
     InternalError,
     InterfaceError,
     OperationalError,
@@ -26,6 +28,8 @@ __all__ = [
     "InternalError",
     "InterfaceError",
     "OperationalError",
+    "ConnectionLostError",
+    "ExecutionNotFoundError",
     "ProgrammingError",
     "NotSupportedError",
     "Region",

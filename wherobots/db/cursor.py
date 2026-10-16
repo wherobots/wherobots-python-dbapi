@@ -1,9 +1,9 @@
 import math
 import queue
 import re
-from typing import Any, List, Tuple, Dict
+from typing import Any, Callable, List, Tuple, Dict
 
-from .errors import ProgrammingError
+from .errors import NotSupportedError, ProgrammingError
 from .models import ExecutionResult, Store, StoreResult
 
 # Matches pyformat parameter markers: %(name)s
@@ -67,9 +67,10 @@ _TYPE_MAP = {
 
 
 class Cursor:
-    def __init__(self, exec_fn, cancel_fn) -> None:
+    def __init__(self, exec_fn, cancel_fn, attach_fn=None) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
+        self.__attach_fn = attach_fn
 
         self.__queue: queue.Queue = queue.Queue()
         self.__results: list[Any] | None = None
@@ -94,6 +95,17 @@ class Cursor:
     @property
     def rowcount(self) -> int:
         return self.__rowcount
+
+    @property
+    def execution_id(self) -> str | None:
+        """The ID of this cursor's current or last execution.
+
+        ``None`` before the first ``execute()`` or ``attach()``, and after one
+        that was rejected before submission. After a
+        :class:`~wherobots.db.errors.ConnectionLostError`, pass it to
+        ``attach()`` on a cursor of a reconnected connection.
+        """
+        return self.__current_execution_id
 
     def __in_flight_execution_id(self) -> str | None:
         """The current execution's id if its result has not yet arrived.
@@ -170,6 +182,51 @@ class Cursor:
         parameters: Dict[str, Any] | None = None,
         store: Store | None = None,
     ) -> None:
+        self.__start(
+            lambda handler: self.__exec_fn(
+                _substitute_parameters(operation, parameters), handler, store
+            )
+        )
+
+    def attach(self, execution_id: str, store: Store | None = None) -> None:
+        """Re-attach to an execution already on the SQL session, by its ID.
+
+        Use it to recover a query whose connection was lost: open a new
+        connection to the same session with ``Connection.reconnect()``, then
+        attach one of its cursors to ``ConnectionLostError.execution_id``.
+        Afterwards, fetch the outcome as after ``execute()``.
+
+        ``store`` must be the ``Store`` the execution was started with, if
+        any: it tells the driver to expect a stored result. Like ``execute()``,
+        this first cancels the cursor's own in-flight execution, and from then
+        on the cursor owns the attached one: closing the cursor, or executing
+        on it, before the outcome arrives cancels it.
+
+        Fetching raises :class:`~wherobots.db.errors.ExecutionNotFoundError`
+        if the session doesn't know the execution, for example because it ran
+        on a different session or the session restarted. An older SQL session
+        that doesn't support attaching still answers with the execution's
+        state; the driver then polls it for the outcome (see
+        ``stale_query_probe_seconds``). If such a session reports no location
+        for a stored result (it predates reporting it, or the result is
+        empty), the driver can't tell which, and fails the query with an
+        ``OperationalError``.
+        """
+        if self.__attach_fn is None:
+            raise NotSupportedError("This cursor can't attach to executions")
+        if not isinstance(execution_id, str) or not execution_id:
+            raise ProgrammingError("execution_id must be a non-empty string")
+        if execution_id == self.__in_flight_execution_id():
+            # Cancelling it first, as a new execution would, would cancel the
+            # very execution being attached to.
+            raise ProgrammingError(
+                f"This cursor is already waiting for execution {execution_id}"
+            )
+        attach_fn = self.__attach_fn
+        self.__start(lambda handler: attach_fn(execution_id, handler, store))
+
+    def __start(self, submit: Callable[[Callable[[Any], None]], str]) -> None:
+        """Reset for a new execution, then submit it with its result handler."""
         in_flight = self.__in_flight_execution_id()
         if in_flight:
             self.__cancel_fn(in_flight)
@@ -189,11 +246,7 @@ class Cursor:
         # A rejected submission must not leave the previous execution ID paired
         # with this new empty queue (which would make a later fetch wait forever).
         self.__current_execution_id = None
-        self.__current_execution_id = self.__exec_fn(
-            _substitute_parameters(operation, parameters),
-            self.__queue.put,
-            store,
-        )
+        self.__current_execution_id = submit(self.__queue.put)
 
     def get_store_result(self) -> StoreResult | None:
         """Get the store result for the last executed query.
