@@ -12,7 +12,7 @@ import platform
 import requests
 import tenacity
 import threading
-from typing import Final, Union, Dict
+from typing import Any, Final, Union, Dict
 import urllib.parse
 import websockets.exceptions
 import websockets.sync.client
@@ -29,6 +29,7 @@ from .constants import (
     MAX_MESSAGE_SIZE,
     PARAM_STYLE,
     PROTOCOL_VERSION,
+    SESSION_FALLBACK_HEADER,
 )
 from .errors import (
     InterfaceError,
@@ -127,6 +128,7 @@ def connect(
     cancel_event: Union[threading.Event, None] = None,
     extra_headers: Union[Dict[str, str], None] = None,
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
+    session_key: Union[str, None] = None,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -154,6 +156,11 @@ def connect(
         back off to at most 8 times this interval. ``None`` disables probing;
         an invalid value (non-numeric, non-finite, or not positive) also
         disables it.
+    :param session_key: Keeps this connection on SQL sessions of its own: the
+        API reuses a session only for connections that ask with the same key,
+        and never one opened without a key. When a session of the key's own
+        would exceed a quota, the API shares one under another key instead;
+        the connection's ``session_fallback`` then says so.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -198,18 +205,22 @@ def connect(
 
     _check_cancelled(cancel_event)
 
+    body: Dict[str, Any] = {
+        "runtimeId": runtime_id,
+        "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
+        "version": version,
+        "sessionType": session_type.value,
+    }
+    if session_key is not None:
+        body["sessionKey"] = session_key
+
     try:
         resp = requests.post(
             url=f"{host}/sql/session",
             # `requests` omits query params whose value is None, so an omitted
             # region is simply not sent and the API applies the org default.
             params={"region": region_name, "force_new": force_new},
-            json={
-                "runtimeId": runtime_id,
-                "shutdownAfterInactiveSeconds": shutdown_after_inactive_seconds,
-                "version": version,
-                "sessionType": session_type.value,
-            },
+            json=body,
             headers=headers,
             timeout=DEFAULT_HTTP_TIMEOUT,
         )
@@ -228,6 +239,21 @@ def connect(
     # At this point we've been redirected to /sql/session/{session_id}, which we'll need to keep polling until the
     # session is in READY state.
     session_id_url = resp.url
+    # The fallback header is on the API's 303, which `requests` followed. Other
+    # redirects (a 307 or 308 to a canonical endpoint) may come before it, so
+    # every hop is read, latest first.
+    session_fallback = next(
+        (
+            hop.headers[SESSION_FALLBACK_HEADER]
+            for hop in reversed([*resp.history, resp])
+            if hop.headers.get(SESSION_FALLBACK_HEADER)
+        ),
+        None,
+    )
+    if session_fallback is not None:
+        logging.warning(
+            "The API shared a SQL session under another key (%s).", session_fallback
+        )
 
     @tenacity.retry(
         stop=tenacity.stop_after_delay(wait_timeout),
@@ -280,6 +306,7 @@ def connect(
         .path.rstrip("/")
         .rsplit("/", 1)[-1],
         stale_query_probe_seconds=stale_query_probe_seconds,
+        session_fallback=session_fallback,
     )
 
 
@@ -309,10 +336,12 @@ def connect_direct(
     cancel_event: Union[threading.Event, None] = None,
     session_id: str | None = None,
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
+    session_fallback: str | None = None,
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
     :param stale_query_probe_seconds: See :func:`connect`.
+    :param session_fallback: See :attr:`Connection.session_fallback`.
     """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -359,4 +388,5 @@ def connect_direct(
         geometry_representation=geometry_representation,
         session_id=session_id,
         stale_query_probe_seconds=stale_query_probe_seconds,
+        session_fallback=session_fallback,
     )

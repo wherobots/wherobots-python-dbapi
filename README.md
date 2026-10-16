@@ -277,6 +277,14 @@ users may find useful:
     caller needs to interrupt it (e.g. on client disconnect or timeout).
     The event is checked before each HTTP request, between retry
     attempts, and before the WebSocket handshake.
+* `session_key`: keeps this connection on SQL sessions of its own. The
+    API reuses a session only for connections that ask with the same key,
+    and never one opened without a key, so a heavy query elsewhere never
+    holds the session your queries run on. When a new session would exceed
+    your organization's quota, the API shares another of your sessions
+    under another key instead, with or without `session_key`, and the
+    connection's `session_fallback` is `"quota"` (it is `None` otherwise).
+    `connection.session_id` names the session.
 * `stale_query_probe_seconds`: how long a running query may go without
     any message from the SQL session before the driver asks the session
     for its state again, in case the query's completion event was lost.

@@ -30,17 +30,30 @@ def _run_connect(mock_post, mock_get, **connect_kwargs):
     return kwargs
 
 
-def _run_connect_full(mock_post, mock_get, session_url=None, **connect_kwargs):
-    """Drive a successful connect().
+def _redirect(status_code, headers=None):
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = headers or {}
+    return response
 
-    Returns a tuple of (kwargs passed to requests.post, kwargs passed to the
-    patched connect_direct) so tests can assert on both the HTTP POST and the
-    WebSocket upgrade path.
+
+def _mock_ready_session(
+    mock_post, mock_get, session_url=None, redirect_headers=None, history=None
+):
+    """Answer the session request with a followed 303 and a READY status.
+
+    ``redirect_headers`` are the headers of the API's 303 answer, which
+    `requests` keeps in the final response's history; ``history`` replaces
+    that whole history.
     """
     post_resp = MagicMock()
     post_resp.status_code = 200
     post_resp.url = session_url or "https://api.example.com/sql/session/test-id"
     post_resp.raise_for_status = MagicMock()
+    post_resp.headers = {}
+    post_resp.history = (
+        history if history is not None else [_redirect(303, redirect_headers)]
+    )
     mock_post.return_value = post_resp
 
     get_resp = MagicMock()
@@ -52,6 +65,23 @@ def _run_connect_full(mock_post, mock_get, session_url=None, **connect_kwargs):
     }
     mock_get.return_value = get_resp
 
+
+def _run_connect_full(
+    mock_post,
+    mock_get,
+    session_url=None,
+    redirect_headers=None,
+    history=None,
+    **connect_kwargs,
+):
+    """Drive a successful connect().
+
+    Returns a tuple of (kwargs passed to requests.post, kwargs passed to the
+    patched connect_direct) so tests can assert on both the HTTP POST and the
+    WebSocket upgrade path.
+    """
+    _mock_ready_session(mock_post, mock_get, session_url, redirect_headers, history)
+
     with patch("wherobots.db.driver.connect_direct") as mock_cd:
         mock_cd.return_value = MagicMock()
         connect(api_key="test-key", **connect_kwargs)
@@ -59,6 +89,76 @@ def _run_connect_full(mock_post, mock_get, session_url=None, **connect_kwargs):
 
     _, post_kwargs = mock_post.call_args
     return post_kwargs, cd_kwargs
+
+
+class TestConnectSessionKey:
+    """session_key reaches the API, and the API's fallback reaches the caller."""
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_key_is_sent_in_the_body(self, mock_post, mock_get):
+        kwargs = _run_connect(mock_post, mock_get, session_key="waldo:chat-1")
+        assert kwargs["json"]["sessionKey"] == "waldo:chat-1"
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_omitted_session_key_is_not_sent(self, mock_post, mock_get):
+        kwargs = _run_connect(mock_post, mock_get)
+        assert "sessionKey" not in kwargs["json"]
+
+    @pytest.mark.parametrize(
+        ("redirect_headers", "fallback"),
+        [
+            ({"X-Wherobots-Sql-Session-Fallback": "quota"}, "quota"),
+            ({}, None),
+        ],
+        ids=["fallback", "own session"],
+    )
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_apis_fallback_reaches_the_connection(
+        self, mock_post, mock_get, redirect_headers, fallback
+    ):
+        _, cd_kwargs = _run_connect_full(
+            mock_post,
+            mock_get,
+            redirect_headers=redirect_headers,
+            session_key="waldo:chat-2",
+        )
+        assert cd_kwargs["session_fallback"] == fallback
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_fallback_is_read_past_an_earlier_redirect(self, mock_post, mock_get):
+        """A 307 to a canonical endpoint before the API's 303 hides nothing."""
+        _, cd_kwargs = _run_connect_full(
+            mock_post,
+            mock_get,
+            history=[
+                _redirect(307),
+                _redirect(303, {"X-Wherobots-Sql-Session-Fallback": "quota"}),
+            ],
+        )
+        assert cd_kwargs["session_fallback"] == "quota"
+
+    @patch("wherobots.db.driver.websockets.sync.client.connect")
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_connection_gets_the_session_and_fallback(
+        self, mock_post, mock_get, mock_ws
+    ):
+        """Through the real connect_direct, not around it."""
+        _mock_ready_session(
+            mock_post,
+            mock_get,
+            redirect_headers={"X-Wherobots-Sql-Session-Fallback": "quota"},
+        )
+        mock_ws.return_value = MagicMock()
+        with patch("wherobots.db.driver.Connection") as mock_conn:
+            connect(api_key="test-key", session_key="waldo:chat-2")
+        _, conn_kwargs = mock_conn.call_args
+        assert conn_kwargs["session_id"] == "test-id"
+        assert conn_kwargs["session_fallback"] == "quota"
 
 
 class TestConnectRegionRuntime:
@@ -158,6 +258,8 @@ class TestConnectCancelEvent:
         post_resp.status_code = 200
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
+        post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         # GET returns INITIALIZING (triggers TryAgain)
@@ -205,6 +307,8 @@ class TestConnectCancelEvent:
         post_resp.status_code = 200
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
+        post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         get_resp = MagicMock()
@@ -365,6 +469,8 @@ class TestWherobotsClientHeader:
         post_resp.status_code = 200
         post_resp.url = "https://api.example.com/sql/session/test-id"
         post_resp.raise_for_status = MagicMock()
+        post_resp.history = []
+        post_resp.headers = {}
         mock_post.return_value = post_resp
 
         get_resp = MagicMock()

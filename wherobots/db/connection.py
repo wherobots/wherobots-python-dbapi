@@ -214,6 +214,7 @@ class Connection:
         geometry_representation: GeometryRepresentation | None = None,
         session_id: str | None = None,
         stale_query_probe_seconds: float | None = DEFAULT_STALE_QUERY_PROBE_SECONDS,
+        session_fallback: str | None = None,
     ):
         self.__ws = ws
         self.__results_format = results_format
@@ -238,6 +239,7 @@ class Connection:
                 self.__recv_timeout = check
 
         self.__session_id = session_id
+        self.__session_fallback = session_fallback
         self.__lock = threading.Lock()
         self.__send_lock = threading.Lock()
         self.__shutdown_done = threading.Event()
@@ -251,6 +253,19 @@ class Connection:
             target=self.__main_loop, daemon=True, name="wherobots-connection"
         )
         self.__thread.start()
+
+    @property
+    def session_id(self) -> str | None:
+        """The id of the SQL session this connection is on, when known."""
+        return self.__session_id
+
+    @property
+    def session_fallback(self) -> str | None:
+        """Why the API gave this connection a session under another key than
+        the one it asked for, or None when it did not. ``"quota"``: a session
+        of the key's own would have exceeded a quota, so the connection shares
+        another of the user's sessions."""
+        return self.__session_fallback
 
     def __enter__(self):
         return self

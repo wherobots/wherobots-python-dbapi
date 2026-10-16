@@ -19,6 +19,9 @@ DEFAULT_CLOSE_TIMEOUT_SECONDS: float = 1.0
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
 # Silence, per query, before the driver re-asks the session for its state.
 DEFAULT_STALE_QUERY_PROBE_SECONDS: float = 30.0
+# The API sets this on its answer to a session request when it gave the request
+# a session under another key than its own, naming why ("quota").
+SESSION_FALLBACK_HEADER: str = "X-Wherobots-Sql-Session-Fallback"
 
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")
