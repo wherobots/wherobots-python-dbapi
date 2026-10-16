@@ -200,6 +200,65 @@ Progress events are best-effort and may not be available for all query
 types or server versions. The handler is simply not invoked when no
 progress information is available.
 
+### Recovering from a lost connection
+
+If the connection to the SQL session is lost while a query is pending,
+fetching its outcome raises `ConnectionLostError`, a subclass of
+`OperationalError`. The query may still be running on the SQL session;
+the error's `execution_id` and `session_id` attributes identify it. A
+cursor's `execution_id` property also holds the ID of its current or
+last execution. (When `execute()` itself raises `ConnectionLostError`,
+the connection was already lost and the statement was never sent.)
+
+To recover the outcome, open a new connection to the same SQL session
+with `Connection.reconnect()`, and re-attach a cursor to the execution
+with `Cursor.attach()`:
+
+```python
+from wherobots.db import ConnectionLostError, Store, connect
+
+store = Store.for_download()
+with connect(api_key='...') as conn:
+    curr = conn.cursor()
+    curr.execute("SELECT ...", store=store)
+    try:
+        store_result = curr.get_store_result()
+    except ConnectionLostError as e:
+        with conn.reconnect() as again:
+            curr = again.cursor()
+            curr.attach(e.execution_id, store=store)
+            store_result = curr.get_store_result()
+```
+
+* `reconnect()` connects straight to the same SQL session's WebSocket,
+    with the headers and settings of the original connection, including
+    its `cancel_event` (but not its progress handler). Unlike `connect()`,
+    it never starts a new session: if the session is gone, it fails with
+    an `InterfaceError`.
+* `attach(execution_id, store=None)` takes the `Store` the execution was
+    started with, if any. Afterwards, fetch the outcome as after
+    `execute()`. Like `execute()`, it first cancels the cursor's own
+    in-flight execution, and the cursor then owns the attached one:
+    closing the cursor, or executing on it, before the outcome arrives
+    cancels the execution.
+* If the SQL session doesn't know the execution (it ran on another
+    session, or the session restarted), fetching raises
+    `ExecutionNotFoundError`, another `OperationalError` subclass.
+* If the execution was cancelled on the SQL session before or while you
+    re-attached (for example, its grace period for a lost connection ran
+    out, or another client cancelled it), fetching raises
+    `ExecutionCancelledError`, also an `OperationalError` subclass: its
+    outcome, including whether a write committed, is unknown. An attached
+    execution that you cancel yourself, by closing the cursor or executing
+    on it, completes with an empty result, as an executed one does.
+* An older SQL session that doesn't support attaching still answers with
+    the execution's state, and the driver polls it for the outcome (see
+    `stale_query_probe_seconds` below). If such a session reports no
+    location for a stored result, because it predates reporting it or
+    because the stored result is empty, the driver can't tell which, and
+    fails the query with an `OperationalError`. With probes disabled,
+    attaching to a running execution on such a session fails right away.
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
