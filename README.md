@@ -244,6 +244,13 @@ with connect(api_key='...') as conn:
 * If the SQL session doesn't know the execution (it ran on another
     session, or the session restarted), fetching raises
     `ExecutionNotFoundError`, another `OperationalError` subclass.
+* If the execution was cancelled on the SQL session before or while you
+    re-attached (for example, its grace period for a lost connection ran
+    out, or another client cancelled it), fetching raises
+    `ExecutionCancelledError`, also an `OperationalError` subclass: its
+    outcome, including whether a write committed, is unknown. An attached
+    execution that you cancel yourself, by closing the cursor or executing
+    on it, completes with an empty result, as an executed one does.
 * An older SQL session that doesn't support attaching still answers with
     the execution's state, and the driver polls it for the outcome (see
     `stale_query_probe_seconds` below). If such a session reports no

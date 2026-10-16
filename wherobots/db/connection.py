@@ -21,6 +21,7 @@ from ._transport import abort_connection, socket_writable
 from .cursor import Cursor
 from .errors import (
     ConnectionLostError,
+    ExecutionCancelledError,
     ExecutionNotFoundError,
     NotSupportedError,
     OperationalError,
@@ -221,6 +222,12 @@ class Query:
     watch: _Watch = field(default_factory=_Watch)
     attach: _Attach | None = None
     """Set for a query attached here rather than executed here."""
+    cancel_requested: bool = False
+    """This connection sent a cancel for the query.
+
+    Unlike the reader-owned fields, a user thread writes it, under ``__lock``
+    and before the cancel is sent, so it's set by the time the session can
+    report the cancellation. Read under ``__lock`` too."""
 
 
 class Connection:
@@ -834,6 +841,27 @@ class Connection:
                     query.state = ExecutionState.COMPLETED
                     complete_query(ExecutionResult(results=decoded))
             elif query.state == ExecutionState.CANCELLED:
+                if attach is not None:
+                    with self.__lock:
+                        requested = query.cancel_requested
+                    if not requested:
+                        # Not this connection's cancel: the session cancelled
+                        # it before or while this connection re-attached.
+                        # Completing empty would report, say, a write
+                        # cancelled midway as a success.
+                        cancelled = ExecutionCancelledError(
+                            f"Execution {execution_id} was cancelled on SQL "
+                            f"session {self.__session_id or '(unknown)'} before "
+                            "or while this connection re-attached to it (for "
+                            "example, its orphan grace period ran out, or "
+                            "another client cancelled it). Its outcome is "
+                            "unknown: for a write, whether it committed.",
+                            session_id=self.__session_id,
+                            execution_id=execution_id,
+                        )
+                        logging.warning("%s", cancelled)
+                        complete_query(ExecutionResult(error=cancelled))
+                        return
                 logging.info(
                     "Query %s has been cancelled; returning empty results.",
                     execution_id,
@@ -1135,9 +1163,13 @@ class Connection:
 
     def __cancel_query(self, execution_id: str) -> None:
         """Cancels the query with the given execution ID."""
-        query = self.__queries.get(execution_id)
-        if not query:
-            return
+        with self.__lock:
+            query = self.__queries.get(execution_id)
+            if query is None:
+                return
+            # Before the request goes out: the session's cancelled state can
+            # only follow it.
+            query.cancel_requested = True
 
         request = {
             "kind": RequestKind.CANCEL.value,

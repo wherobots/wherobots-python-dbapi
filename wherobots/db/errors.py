@@ -52,6 +52,31 @@ class ConnectionLostError(OperationalError):
         self.execution_id = execution_id
 
 
+class ExecutionCancelledError(OperationalError):
+    """An attached execution was cancelled, and not by this connection.
+
+    The SQL session cancelled it before or while this connection re-attached
+    to it, for example because its orphan grace period ran out, or another
+    client cancelled it. Its outcome is unknown: for a write, whether it
+    committed.
+
+    Attributes:
+        session_id: The SQL session's ID, or None if the connection didn't
+            know it.
+        execution_id: The ID of the execution.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        session_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.session_id = session_id
+        self.execution_id = execution_id
+
+
 class ExecutionNotFoundError(OperationalError):
     """The SQL session has no record of the execution to attach to.
 

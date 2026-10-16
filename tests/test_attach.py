@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from wherobots.db import (
     ConnectionLostError,
+    ExecutionCancelledError,
     ExecutionNotFoundError,
     NotSupportedError,
     OperationalError,
@@ -475,16 +476,101 @@ def test_acknowledged_attach_waits_with_probes_disabled():
         conn.close()
 
 
-def test_attach_to_a_cancelled_execution_completes_empty():
-    session = new_session("cancelled")
+def assert_cancelled_elsewhere(error):
+    assert isinstance(error, ExecutionCancelledError)
+    assert isinstance(error, OperationalError)
+    assert error.session_id == "session-1"
+    assert error.execution_id == EID
+    assert str(error) == (
+        f"Execution {EID} was cancelled on SQL session session-1 before or "
+        "while this connection re-attached to it (for example, its orphan "
+        "grace period ran out, or another client cancelled it). Its outcome "
+        "is unknown: for a write, whether it committed."
+    )
+
+
+@pytest.mark.parametrize("make_session", [new_session, old_session])
+def test_attach_to_an_already_cancelled_execution_raises(make_session):
+    # E.g. the session's orphan grace period ran out before the reconnect.
+    session = make_session("cancelled")
     conn = open_connection(session)
     try:
         cursor = conn.cursor()
         cursor.attach(EID, store=STORE)
+        assert_cancelled_elsewhere(outcome(cursor).error)
+        with pytest.raises(ExecutionCancelledError):
+            cursor.get_store_result()
+        assert tracked(conn, EID) is None
+    finally:
+        conn.close()
+
+
+def test_cancelled_pushed_after_attach_raises():
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID)
+        assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
+        session.put(kind="state_updated", execution_id=EID, state="cancelled")
+        assert_cancelled_elsewhere(outcome(cursor).error)
+        assert session.requests("cancel") == []
+    finally:
+        conn.close()
+
+
+def test_cancelled_probe_reply_after_attach_on_old_session_raises():
+    states = iter(["running"])
+    session = Session(on_retrieve=lambda s, m: answer(s, m, next(states, "cancelled")))
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert_cancelled_elsewhere(outcome(cursor).error)
+        assert len(session.retrieves()) == 2
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("acknowledged", [True, False])
+def test_own_cancel_of_an_attached_execution_completes_empty(acknowledged):
+    def on_retrieve(s, m):
+        state = "cancelled" if s.requests("cancel") else "running"
+        fields = {"attached": True} if acknowledged and m.get("attach") else {}
+        answer(s, m, state, **fields)
+
+    session = Session(on_retrieve=on_retrieve)
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
+        cursor.close()
+        assert [m["execution_id"] for _, m in session.requests("cancel")] == [EID]
+        if acknowledged:
+            # Pushed to the new owner. An older session's next probe reply
+            # says cancelled instead.
+            session.put(kind="state_updated", execution_id=EID, state="cancelled")
         result = outcome(cursor)
         assert result.error is None
         assert result.results.empty
         assert tracked(conn, EID) is None
+    finally:
+        conn.close()
+
+
+def test_executed_query_cancelled_elsewhere_still_completes_empty():
+    session = Session()
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        session.put(
+            kind="state_updated", execution_id=cursor.execution_id, state="cancelled"
+        )
+        result = outcome(cursor)
+        assert result.error is None
+        assert result.results.empty
     finally:
         conn.close()
 

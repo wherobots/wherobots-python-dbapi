@@ -204,7 +204,11 @@ class Cursor:
 
         Fetching raises :class:`~wherobots.db.errors.ExecutionNotFoundError`
         if the session doesn't know the execution, for example because it ran
-        on a different session or the session restarted. An older SQL session
+        on a different session or the session restarted, and
+        :class:`~wherobots.db.errors.ExecutionCancelledError` if the session
+        cancelled it before or while re-attaching (unless this cursor
+        cancelled it, which completes empty, as for ``execute()``). An older
+        SQL session
         that doesn't support attaching still answers with the execution's
         state; the driver then polls it for the outcome (see
         ``stale_query_probe_seconds``). If such a session reports no location
