@@ -19,6 +19,11 @@ DEFAULT_CLOSE_TIMEOUT_SECONDS: float = 1.0
 DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS: float = 900
 # Silence, per query, before the driver re-asks the session for its state.
 DEFAULT_STALE_QUERY_PROBE_SECONDS: float = 30.0
+# How long the driver keeps trying to reconnect to the SQL session after losing
+# the connection. It must fit, along with the up to ~40s that keepalive takes
+# to notice a dead connection, in the session's grace period for orphaned
+# executions (120s by default), after which the session cancels them.
+DEFAULT_RECONNECT_TIMEOUT_SECONDS: float = 60.0
 
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")

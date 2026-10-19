@@ -29,6 +29,9 @@ class NotSupportedError(DatabaseError):
 class ConnectionLostError(OperationalError):
     """The connection to the SQL session was lost while a query was pending.
 
+    A connection from ``connect()`` or ``connect_direct()`` first reconnects
+    by itself and re-attaches its pending queries; this means that failed
+    within ``reconnect_timeout_seconds``, or that reconnecting is turned off.
     The query may still be running on the SQL session. To recover its outcome,
     open a new connection to the same session with ``Connection.reconnect()``
     and re-attach to the execution with ``Cursor.attach(execution_id)``.

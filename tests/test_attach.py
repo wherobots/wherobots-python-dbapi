@@ -1071,6 +1071,8 @@ def test_lost_query_is_recovered_by_reconnecting_and_attaching():
             read_timeout=READ_TIMEOUT,
             session_id="session-1",
             stale_query_probe_seconds=PROBE,
+            # The manual path, for when the connection doesn't reconnect.
+            reconnect_timeout_seconds=None,
         )
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM t", store=STORE)
