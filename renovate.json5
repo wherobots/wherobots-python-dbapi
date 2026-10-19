@@ -1,0 +1,7 @@
+{
+  // Wherobots' org-wide dependency policy lives in ci-tools. Per-repo overrides go below.
+  // The `.json5` extension is required: Renovate resolves an extensionless preset reference
+  // to `default.json` only, so dropping it 404s and aborts every run as "invalid config".
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["github>wherobots/ci-tools//renovate-config/default.json5"],
+}
