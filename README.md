@@ -233,48 +233,15 @@ A re-attached query can still fail:
     fails the query with an `OperationalError`. With probes disabled, a
     running execution on such a session fails right away.
 
-#### When reconnecting fails
-
 If the connection can't reconnect in time, or reconnecting is turned off
 (`reconnect_timeout_seconds=None`), fetching a pending query's outcome
 raises `ConnectionLostError`, another `OperationalError` subclass. The
-query may still be running on the SQL session; the error's
-`execution_id` and `session_id` attributes identify it. A cursor's
-`execution_id` property also holds the ID of its current or last
-execution. (When `execute()` itself raises `ConnectionLostError`, the
-connection was already lost and the statement was never sent.)
-
-To recover the outcome yourself, open a new connection to the same SQL
-session with `Connection.reconnect()`, and re-attach a cursor to the
-execution with `Cursor.attach()`:
-
-```python
-from wherobots.db import ConnectionLostError, Store, connect
-
-store = Store.for_download()
-with connect(api_key='...') as conn:
-    curr = conn.cursor()
-    curr.execute("SELECT ...", store=store)
-    try:
-        store_result = curr.get_store_result()
-    except ConnectionLostError as e:
-        with conn.reconnect() as again:
-            curr = again.cursor()
-            curr.attach(e.execution_id, store=store)
-            store_result = curr.get_store_result()
-```
-
-* `reconnect()` connects straight to the same SQL session's WebSocket,
-    with the headers and settings of the original connection, including
-    its `cancel_event` (but not its progress handler). Unlike `connect()`,
-    it never starts a new session: if the session is gone, it fails with
-    an `InterfaceError`.
-* `attach(execution_id, store=None)` takes the `Store` the execution was
-    started with, if any. Afterwards, fetch the outcome as after
-    `execute()`, with the same failures as above. Like `execute()`, it
-    first cancels the cursor's own in-flight execution, and the cursor
-    then owns the attached one: closing the cursor, or executing on it,
-    before the outcome arrives cancels the execution.
+query may still have run, or be running, on the SQL session: its outcome,
+including whether a write committed, is unknown. The error's
+`execution_id` and `session_id` attributes identify it, and a cursor's
+`execution_id` property holds the ID of its current or last execution.
+(When `execute()` itself raises `ConnectionLostError`, the connection was
+already lost and the statement was never sent.)
 
 ### Runtime and region selection
 

@@ -31,7 +31,6 @@ from .errors import (
     InterfaceError,
     NotSupportedError,
     OperationalError,
-    ProgrammingError,
 )
 from .models import ExecutionResult, ProgressInfo, Store, StoreResult
 from .types import (
@@ -105,7 +104,7 @@ _EXECUTION_NOT_FOUND = "Execution not found"
 Its execution cache is a small LRU that can evict a query that is still
 running, whose terminal state_updated still arrives (it's pushed from the
 query's own done-callback). So for a probe, this means "can't answer", not
-"failed". For an attach, it means the session doesn't know the execution.
+"failed". For a re-attach, it means the session doesn't know the execution.
 """
 
 _PROBED_STATES = frozenset(
@@ -206,17 +205,16 @@ class _Watch:
 
 @dataclass
 class _Attach:
-    """Bookkeeping for a query re-claimed with an attach.
+    """Bookkeeping for a query re-attached after reconnecting.
 
-    Such a query was started by another connection (``Cursor.attach()``), or
-    by this one before it lost its transport and reconnected. Owned like
+    The session sent its events to the lost connection until then. Owned like
     ``_Watch``.
     """
 
     reply_outstanding: bool = True
     """An attach request was sent and no reply to a retrieve has arrived since.
 
-    The attach is the query's first request on this connection, so the first
+    The attach is the query's first request on this transport, so the first
     reply to a retrieve normally answers it. (After a pushed success, the
     normal retrieve's reply can come first; it carries the results anyway.)
     A probe sent while it's outstanding repeats the attach, so the order of
@@ -229,8 +227,6 @@ class _Attach:
     lost connection; only polling it can tell the outcome."""
     probed: bool = False
     """The one probe allowed while ``reply_outstanding`` was sent."""
-    resumed: bool = False
-    """Re-attached by this connection after reconnecting, not by the user."""
 
 
 @dataclass
@@ -242,7 +238,7 @@ class Query:
     store: Store | None = None
     watch: _Watch = field(default_factory=_Watch)
     attach: _Attach | None = None
-    """Set for a query attached here rather than executed here."""
+    """Set once the query is re-attached after reconnecting."""
     cancel_requested: bool = False
     """This connection sent a cancel for the query.
 
@@ -285,7 +281,6 @@ class Connection:
         session_id: str | None = None,
         stale_query_probe_seconds: float | None = DEFAULT_STALE_QUERY_PROBE_SECONDS,
         *,
-        reconnect_factory: Callable[[], "Connection"] | None = None,
         transport_factory: (
             Callable[[float], websockets.sync.client.ClientConnection] | None
         ) = None,
@@ -303,7 +298,6 @@ class Connection:
             non-finite, or not positive), disables automatic reconnection.
         """
         self.__ws = ws
-        self.__reconnect_factory = reconnect_factory
         self.__transport_factory = transport_factory
         self.__reconnect_within = (
             _positive_seconds(reconnect_timeout_seconds)
@@ -407,33 +401,7 @@ class Connection:
         raise NotSupportedError
 
     def cursor(self) -> Cursor:
-        return Cursor(self.__execute_sql, self.__cancel_query, self.__attach_execution)
-
-    def reconnect(self) -> "Connection":
-        """Open a new connection to the same SQL session.
-
-        Connects straight to the session's WebSocket, with the headers and
-        settings this connection was opened with (``connect()``'s, or
-        ``connect_direct()``'s), so a session that is gone fails fast instead
-        of being replaced by a new one. The connection already reconnects by
-        itself after a lost transport; use this when that's turned off or has
-        given up, after a :class:`~wherobots.db.errors.ConnectionLostError`, to
-        re-attach to the lost execution with ``Cursor.attach()``.
-
-        The new connection doesn't inherit the progress handler. This
-        connection is left as it is; close it as usual.
-
-        Raises ``NotSupportedError`` for a connection constructed without a
-        reconnect factory (not by ``connect()`` or ``connect_direct()``), and
-        ``InterfaceError`` if the new connection can't be established.
-        """
-        factory = self.__reconnect_factory
-        if factory is None:
-            raise NotSupportedError(
-                "This connection wasn't opened by connect() or connect_direct(); "
-                "it can't reconnect"
-            )
-        return factory()
+        return Cursor(self.__execute_sql, self.__cancel_query)
 
     def set_progress_handler(self, handler: ProgressHandler | None) -> None:
         """Register a callback invoked for execution progress events.
@@ -495,9 +463,9 @@ class Connection:
         with the query's current state (and its results or result location
         once it has succeeded), or with an error for an unknown execution.
 
-        A query attached with ``Cursor.attach()``, or re-attached after a
-        reconnect, is probed the same way, which is how the driver learns its
-        outcome from an older session that ignores the attach.
+        A query re-attached after a reconnect is probed the same way, which is
+        how the driver learns its outcome from an older session that ignores
+        the attach.
 
         Runs on the reader thread, which owns every ``Query``'s watchdog fields.
         Never raises: a watchdog failure must not disturb the receive loop.
@@ -682,10 +650,10 @@ class Connection:
         """Carry on over a new transport, re-attaching every pending query.
 
         Called on the reader thread with ``__send_lock`` held. Each pending
-        query is set up as ``Cursor.attach()`` sets up an attached one, keeping
-        its handler and store, so the replies are handled the same way: a
-        session that supports attaching makes this connection the owner again,
-        and an older one is polled. A query this connection cancelled is
+        query gets a ``retrieve_results`` with ``attach``, keeping its handler
+        and store: a session that supports attaching makes this connection the
+        owner again, pushing the execution's later events here, and answers
+        with ``attached``; an older one ignores the flag, and is polled. A query this connection cancelled is
         cancelled again after its attach, as the cancel may have been lost
         with the transport.
 
@@ -700,7 +668,7 @@ class Connection:
                     # The attach is a retrieve_results; its reply has the state.
                     query.state = ExecutionState.RESULTS_REQUESTED
                     query.watch = _Watch()
-                    query.attach = _Attach(resumed=True)
+                    query.attach = _Attach()
                 cancelled = [q.execution_id for q in pending if q.cancel_requested]
         if closed:
             try:
@@ -824,7 +792,7 @@ class Connection:
         # Whether this event answers a probe (possibly along with the normal
         # retrieve). Read before the bookkeeping below resets it.
         probe_reply = False
-        # Likewise, whether it answers the attach of a query attached here.
+        # Likewise, whether it answers the attach of a re-attached query.
         attach_reply = False
         attach = query.attach if query is not None else None
         if query is not None:
@@ -1107,19 +1075,14 @@ class Connection:
             if attach_reply and not_found:
                 # Unlike for a probe, there's no terminal event to wait for:
                 # the session doesn't know the execution at all.
-                if attach is not None and attach.resumed:
-                    why = (
-                        "after reconnecting. The statement didn't reach the "
-                        "session before the connection was lost"
-                    )
-                else:
-                    why = "to attach to. It ran on a different session"
                 fail_attached(
                     ExecutionNotFoundError(
                         f"Execution not found: SQL session "
                         f"{self.__session_id or '(unknown)'} has no execution "
-                        f"{execution_id} {why}, the session restarted, or the "
-                        "session no longer tracks it.",
+                        f"{execution_id} after reconnecting. The statement "
+                        "didn't reach the session before the connection was "
+                        "lost, the session restarted, or the session no longer "
+                        "tracks it.",
                         session_id=self.__session_id,
                         execution_id=execution_id,
                     )
@@ -1220,14 +1183,6 @@ class Connection:
                         raise self.__connection_error(query.execution_id)
                     return True
                 if query is not None:
-                    if query.execution_id in self.__queries:
-                        # Only an attach can repeat an ID (executions get fresh
-                        # UUIDs). Replacing the registration would strand the
-                        # first query's handler.
-                        raise ProgrammingError(
-                            "This connection is already tracking execution "
-                            f"{query.execution_id}"
-                        )
                     # The watchdog's clock starts at registration.
                     watch = query.watch
                     watch.last_activity = watch.last_event = time.monotonic()
@@ -1342,35 +1297,6 @@ class Connection:
                 state=ExecutionState.EXECUTION_REQUESTED,
                 handler=handler,
                 store=store,
-            ),
-        )
-        return execution_id
-
-    def __attach_execution(
-        self,
-        execution_id: str,
-        handler: Callable[[Any], None],
-        store: Store | None = None,
-    ) -> str:
-        """Re-claims an execution started by another connection, by its ID.
-
-        Sends retrieve_results with ``attach``: a session that supports it
-        makes this connection the execution's owner, which receives its later
-        events, then answers as to any retrieve_results, with ``attached``. An
-        older session ignores the flag and only answers.
-        """
-        logging.info("Attaching to execution %s ...", execution_id)
-        self.__send(
-            self.__retrieve_request(execution_id, attach=True),
-            Query(
-                # Another connection submitted the statement; it's unknown here.
-                sql="",
-                execution_id=execution_id,
-                # The attach is a retrieve_results; its reply has the state.
-                state=ExecutionState.RESULTS_REQUESTED,
-                handler=handler,
-                store=store,
-                attach=_Attach(),
             ),
         )
         return execution_id

@@ -323,9 +323,8 @@ def connect_direct(
     """Connect to a SQL session's WebSocket endpoint directly.
 
     After losing its WebSocket, the returned connection reconnects to the same
-    endpoint by itself (see ``reconnect_timeout_seconds``). Its ``reconnect()``
-    connects to the same endpoint again, with the same arguments
-    (``cancel_event`` included).
+    endpoint by itself, with the same headers, honouring ``cancel_event`` (see
+    ``reconnect_timeout_seconds``).
 
     :param stale_query_probe_seconds: See :func:`connect`.
     :param reconnect_timeout_seconds: See :func:`connect`.
@@ -378,7 +377,9 @@ def connect_direct(
 
     def open_transport(timeout: float) -> websockets.sync.client.ClientConnection:
         # A single attempt: the connection retries until its own deadline.
-        # Straight to the session's WebSocket, as for reconnect() below.
+        # Straight to the same session's WebSocket: connect() resolves the
+        # session through the REST API, which could start a new session when
+        # this one is gone. A dead session must fail fast instead.
         try:
             return open_ws(reconnect_headers, min(DEFAULT_HTTP_TIMEOUT, timeout))
         except websockets.exceptions.InvalidStatus as e:
@@ -390,24 +391,6 @@ def connect_direct(
                 ) from e
             raise
 
-    def reconnect() -> Connection:
-        # Straight to the same session's WebSocket: connect() resolves the
-        # session through the REST API, which could start a new session when
-        # this one is gone. A dead session must fail fast instead.
-        return connect_direct(
-            uri=uri,
-            protocol=protocol,
-            headers=reconnect_headers,
-            read_timeout=read_timeout,
-            results_format=results_format,
-            data_compression=data_compression,
-            geometry_representation=geometry_representation,
-            cancel_event=cancel_event,
-            session_id=session_id,
-            stale_query_probe_seconds=stale_query_probe_seconds,
-            reconnect_timeout_seconds=reconnect_timeout_seconds,
-        )
-
     return Connection(
         ws,
         read_timeout=read_timeout,
@@ -416,7 +399,6 @@ def connect_direct(
         geometry_representation=geometry_representation,
         session_id=session_id,
         stale_query_probe_seconds=stale_query_probe_seconds,
-        reconnect_factory=reconnect,
         transport_factory=open_transport,
         reconnect_timeout_seconds=reconnect_timeout_seconds,
     )

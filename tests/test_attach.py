@@ -1,9 +1,8 @@
-"""Recovering a query whose connection was lost: reconnect, then re-attach."""
+"""Re-attaching pending queries after a reconnect: handling the replies."""
 
 import json
 import logging
 import queue
-import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -16,14 +15,9 @@ from wherobots.db import (
     ConnectionLostError,
     ExecutionCancelledError,
     ExecutionNotFoundError,
-    NotSupportedError,
     OperationalError,
-    ProgrammingError,
 )
 from wherobots.db.connection import Connection
-from wherobots.db.cursor import Cursor
-from wherobots.db.driver import connect, connect_direct
-from wherobots.db.errors import InterfaceError
 from wherobots.db.models import Store, StoreResult
 from wherobots.db.types import (
     DataCompression,
@@ -47,10 +41,8 @@ STORE = Store.for_download(format=StorageFormat.PARQUET)
 
 RESULT_URI = "https://presigned.example.com/results.parquet"
 
-EID = "exec-started-elsewhere"
-"""An execution started by another (lost) connection."""
-
-WS_CONNECT = "wherobots.db.driver.websockets.sync.client.connect"
+EID = "exec-pending-when-lost"
+"""The execution pending when the connection lost its transport."""
 
 
 class Session:
@@ -155,6 +147,31 @@ def open_connection(session, **kwargs):
     return Connection(session, read_timeout=READ_TIMEOUT, **kwargs)
 
 
+def reattach(session, store=None, **kwargs):
+    """A connection whose query EID was pending when its transport was lost.
+
+    The connection reconnects to ``session``, its only transport to come, and
+    re-attaches the query there. Returns the connection and the query's
+    cursor.
+    """
+    transports = iter([session])
+
+    def transport_factory(timeout):
+        transport = next(transports, None)
+        if transport is None:
+            raise OSError("connection refused")
+        return transport
+
+    kwargs.setdefault("reconnect_timeout_seconds", 0.5)
+    lost = Session()
+    conn = open_connection(lost, transport_factory=transport_factory, **kwargs)
+    cursor = conn.cursor()
+    with patch("wherobots.db.connection.uuid.uuid4", return_value=EID):
+        cursor.execute("SELECT * FROM t", store=store)
+    lost.incoming.put(ConnectionClosedError(None, None))
+    return conn, cursor
+
+
 def tracked(conn, execution_id):
     return conn._Connection__queries.get(execution_id)
 
@@ -238,25 +255,24 @@ def test_execution_id_tracks_the_current_execution():
         with pytest.raises(TypeError):
             cursor.execute("SELECT 2", store=bad)
         assert cursor.execution_id is None
-        cursor.attach(EID)
-        assert cursor.execution_id == EID
     finally:
         conn.close()
 
 
-# Attaching on a session that supports it
+# Re-attaching on a session that supports it
 
 
 def test_attach_request_carries_the_connection_settings():
     session = new_session()
-    conn = open_connection(
+    conn, _ = reattach(
         session,
+        store=STORE,
         results_format=ResultsFormat.JSON,
         data_compression=DataCompression.BROTLI,
         geometry_representation=GeometryRepresentation.WKB,
     )
     try:
-        conn.cursor().attach(EID, store=STORE)
+        assert wait_until(session.retrieves)
         assert session.retrieves()[0] == {
             "kind": "retrieve_results",
             "execution_id": EID,
@@ -273,10 +289,8 @@ def test_attach_request_carries_the_connection_settings():
 def test_attach_on_new_session_completes_from_pushed_event(caplog):
     caplog.set_level(logging.INFO)
     session = new_session("running")
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         assert tracked(conn, EID).attach.acknowledged
         assert deliveries(cursor) == 0
@@ -305,10 +319,8 @@ def test_attach_reply_with_result_uri_completes(attached):
             s, m, "succeeded", result_uri=RESULT_URI, size=9, **fields
         )
     )
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert outcome(cursor).error is None
         assert cursor.get_store_result() == StoreResult(RESULT_URI, 9)
         assert tracked(conn, EID) is None
@@ -331,10 +343,8 @@ def test_attach_reply_with_rows_completes():
         )
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID)
         assert outcome(cursor).error is None
         assert cursor.fetchall()["x"].tolist() == [1, 2]
         assert cursor.rowcount == 2
@@ -344,10 +354,8 @@ def test_attach_reply_with_rows_completes():
 
 def test_acknowledged_empty_store_result_completes_empty():
     session = new_session("succeeded")
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         result = outcome(cursor)
         assert result.error is None
         assert result.store_result is None
@@ -380,10 +388,8 @@ def test_pushed_terminal_event_racing_the_attach_reply_delivers_once(pushed_firs
             s.incoming.put(message)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert outcome(cursor).store_result.result_uri == RESULT_URI
         assert wait_until(session.incoming.empty)
         time.sleep(PROBE * 4)
@@ -414,10 +420,8 @@ def test_pushed_success_racing_the_attach_reply_of_a_non_store_query():
         s.incoming.put(rows)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session, results_format=ResultsFormat.JSON)
+    conn, cursor = reattach(session, results_format=ResultsFormat.JSON)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID)
         assert outcome(cursor).results == [{"x": 1}]
         assert wait_until(lambda: len(session.retrieves()) == 2)
         assert wait_until(session.incoming.empty)
@@ -438,10 +442,8 @@ def test_acknowledged_attach_survives_a_probe_not_found():
             s.put(kind="error", execution_id=EID, message=NOT_FOUND)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: len(session.retrieves()) == 2)
         assert wait_until(lambda: not tracked(conn, EID).watch.probeable)
         assert deliveries(cursor) == 0
@@ -458,10 +460,8 @@ def test_acknowledged_attach_survives_a_probe_not_found():
 
 def test_acknowledged_attach_waits_with_probes_disabled():
     session = new_session("running")
-    conn = open_connection(session, stale_query_probe_seconds=None)
+    conn, cursor = reattach(session, store=STORE, stale_query_probe_seconds=None)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         time.sleep(PROBE * 4)
         assert deliveries(cursor) == 0
@@ -493,10 +493,8 @@ def assert_cancelled_elsewhere(error):
 def test_attach_to_an_already_cancelled_execution_raises(make_session):
     # E.g. the session's orphan grace period ran out before the reconnect.
     session = make_session("cancelled")
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert_cancelled_elsewhere(outcome(cursor).error)
         with pytest.raises(ExecutionCancelledError):
             cursor.get_store_result()
@@ -507,10 +505,8 @@ def test_attach_to_an_already_cancelled_execution_raises(make_session):
 
 def test_cancelled_pushed_after_attach_raises():
     session = new_session("running")
-    conn = open_connection(session)
+    conn, cursor = reattach(session)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         session.put(kind="state_updated", execution_id=EID, state="cancelled")
         assert_cancelled_elsewhere(outcome(cursor).error)
@@ -522,10 +518,8 @@ def test_cancelled_pushed_after_attach_raises():
 def test_cancelled_probe_reply_after_attach_on_old_session_raises():
     states = iter(["running"])
     session = Session(on_retrieve=lambda s, m: answer(s, m, next(states, "cancelled")))
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert_cancelled_elsewhere(outcome(cursor).error)
         assert len(session.retrieves()) == 2
     finally:
@@ -540,10 +534,8 @@ def test_own_cancel_of_an_attached_execution_completes_empty(acknowledged):
         answer(s, m, state, **fields)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         cursor.close()
         assert [m["execution_id"] for _, m in session.requests("cancel")] == [EID]
@@ -585,10 +577,8 @@ def test_attach_to_a_failed_execution_reports_its_error(failed_reply):
         s.put(kind="error", execution_id=EID, message="Table not found: t")
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID)
         error = outcome(cursor).error
         assert type(error) is OperationalError
         assert str(error) == "Table not found: t"
@@ -596,7 +586,7 @@ def test_attach_to_a_failed_execution_reports_its_error(failed_reply):
         conn.close()
 
 
-# Attaching on an older session, which ignores the attach
+# Re-attaching on an older session, which ignores the attach
 
 
 @pytest.mark.parametrize("store", [STORE, None])
@@ -624,10 +614,8 @@ def test_attach_on_old_session_polls_until_succeeded(store, caplog):
             )
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=store)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=store)
         result = outcome(cursor, timeout=5)
         assert result.error is None
         if store is not None:
@@ -657,10 +645,8 @@ def test_old_session_store_result_without_location_fails_clearly(after_probe):
         answer(s, m, next(replies, "succeeded"))
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         error = outcome(cursor).error
         assert type(error) is OperationalError
         assert "succeeded" in str(error)
@@ -683,10 +669,8 @@ def test_old_session_probe_not_found_fails_instead_of_waiting_forever():
             s.put(kind="error", execution_id=EID, message=NOT_FOUND)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         error = outcome(cursor).error
         assert isinstance(error, ExecutionNotFoundError)
         assert "no longer tracks" in str(error)
@@ -699,10 +683,8 @@ def test_old_session_probe_not_found_fails_instead_of_waiting_forever():
 @pytest.mark.parametrize("state", ["running", "pending"])
 def test_old_session_running_attach_fails_when_probes_are_disabled(state):
     session = old_session(state)
-    conn = open_connection(session, stale_query_probe_seconds=None)
+    conn, cursor = reattach(session, store=STORE, stale_query_probe_seconds=None)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         error = outcome(cursor).error
         assert type(error) is OperationalError
         assert "probes are disabled" in str(error)
@@ -711,7 +693,7 @@ def test_old_session_running_attach_fails_when_probes_are_disabled(state):
         conn.close()
 
 
-# Attaching to an execution the session doesn't know
+# Re-attaching to an execution the session doesn't know
 
 
 def test_attach_not_found_raises_execution_not_found():
@@ -720,16 +702,14 @@ def test_attach_not_found_raises_execution_not_found():
             kind="error", execution_id=m["execution_id"], message=NOT_FOUND
         )
     )
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         error = outcome(cursor).error
         assert isinstance(error, ExecutionNotFoundError)
         assert isinstance(error, OperationalError)
         assert error.session_id == "session-1"
         assert error.execution_id == EID
-        assert f"no execution {EID} to attach to" in str(error)
+        assert f"no execution {EID} after reconnecting" in str(error)
         with pytest.raises(ExecutionNotFoundError):
             cursor.get_store_result()
         assert tracked(conn, EID) is None
@@ -747,13 +727,11 @@ def test_not_found_for_a_repeated_attach_is_not_mistaken_for_eviction():
             s.put(kind="error", execution_id=EID, message=NOT_FOUND)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID)
         error = outcome(cursor).error
         assert isinstance(error, ExecutionNotFoundError)
-        assert "to attach to" in str(error)
+        assert "after reconnecting" in str(error)
         assert [r.get("attach") for r in session.retrieves()] == [True, True]
     finally:
         conn.close()
@@ -771,10 +749,8 @@ def test_not_found_for_the_second_of_two_attach_replies(acknowledged):
             s.put(kind="error", execution_id=EID, message=NOT_FOUND)
 
     session = Session(on_retrieve=on_retrieve)
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         if acknowledged:
             # Its terminal event is pushed here: keep waiting for it.
             assert wait_until(lambda: not tracked(conn, EID).watch.probeable)
@@ -799,10 +775,8 @@ def test_not_found_for_the_second_of_two_attach_replies(acknowledged):
 
 def test_unanswered_attach_gets_one_probe_after_4n_that_repeats_it():
     session = Session()  # Doesn't answer, at first.
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: len(session.retrieves()) >= 2)
         attached_at, probed_at = session.retrieve_times()
         assert probed_at - attached_at >= PROBE * 4
@@ -825,40 +799,14 @@ def test_unanswered_attach_gets_one_probe_after_4n_that_repeats_it():
         conn.close()
 
 
-# Cursor.attach semantics
-
-
-def test_attach_cancels_the_cursors_own_in_flight_execution_first():
-    session = new_session("running")
-    conn = open_connection(session)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        previous = cursor.execution_id
-        cursor.attach(EID, store=STORE)
-        (_, cancel), *_ = session.requests("cancel")
-        assert cancel["execution_id"] == previous
-        # The superseded execution's late result can't leak into the attach.
-        session.put(kind="state_updated", execution_id=previous, state="cancelled")
-        session.put(
-            kind="state_updated",
-            execution_id=EID,
-            state="succeeded",
-            result_uri=RESULT_URI,
-        )
-        assert outcome(cursor).store_result.result_uri == RESULT_URI
-        assert deliveries(cursor) == 1
-    finally:
-        conn.close()
+# The cursor's part
 
 
 @pytest.mark.parametrize("then", ["close", "execute"])
-def test_the_cursor_owns_the_attached_execution(then):
+def test_the_cursor_still_owns_the_reattached_execution(then):
     session = new_session("running")
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         if then == "close":
             cursor.close()
@@ -869,77 +817,10 @@ def test_the_cursor_owns_the_attached_execution(then):
         conn.close()
 
 
-def test_attach_to_the_cursors_own_in_flight_execution_is_rejected():
-    session = Session()
-    conn = open_connection(session)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        own = cursor.execution_id
-        with pytest.raises(ProgrammingError, match="already waiting"):
-            cursor.attach(own)
-        # Not cancelled, and still waiting on its result.
-        assert session.requests("cancel") == []
-        assert cursor.execution_id == own
-        session.put(kind="state_updated", execution_id=own, state="cancelled")
-        assert outcome(cursor).error is None
-    finally:
-        conn.close()
-
-
-def test_attach_to_an_execution_tracked_by_another_cursor_is_rejected():
-    session = Session()
-    conn = open_connection(session)
-    try:
-        other = conn.cursor()
-        other.execute("SELECT 1")
-        cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="already tracking"):
-            cursor.attach(other.execution_id)
-        assert cursor.execution_id is None
-        assert session.retrieves() == []
-        # The other cursor still gets its result.
-        session.put(
-            kind="state_updated", execution_id=other.execution_id, state="cancelled"
-        )
-        assert outcome(other).error is None
-    finally:
-        conn.close()
-
-
-@pytest.mark.parametrize("execution_id", ["", None, 42])
-def test_attach_requires_an_execution_id(execution_id):
-    conn = open_connection(Session())
-    try:
-        with pytest.raises(ProgrammingError):
-            conn.cursor().attach(execution_id)
-    finally:
-        conn.close()
-
-
-def test_cursor_without_an_attach_function_cannot_attach():
-    cursor = Cursor(MagicMock(), MagicMock())
-    with pytest.raises(NotSupportedError):
-        cursor.attach(EID)
-
-
-def test_attach_on_a_closed_connection_raises_connection_lost():
-    session = Session()
-    conn = open_connection(session)
-    conn.close()
-    cursor = conn.cursor()
-    with pytest.raises(ConnectionLostError) as exc:
-        cursor.attach(EID)
-    assert exc.value.execution_id == EID
-    assert cursor.execution_id is None
-
-
-def test_transport_loss_while_attached_raises_connection_lost():
+def test_transport_lost_again_without_reconnecting_raises_connection_lost():
     session = new_session("running")
-    conn = open_connection(session)
+    conn, cursor = reattach(session, store=STORE, reconnect_timeout_seconds=0.2)
     try:
-        cursor = conn.cursor()
-        cursor.attach(EID, store=STORE)
         assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
         session.incoming.put(ConnectionClosedError(None, None))
         error = outcome(cursor).error
@@ -947,152 +828,3 @@ def test_transport_loss_while_attached_raises_connection_lost():
         assert error.execution_id == EID
     finally:
         conn.close()
-
-
-# Connection.reconnect
-
-
-def test_reconnect_opens_the_same_session_websocket_with_the_same_settings():
-    sessions = [Session(), new_session("running"), Session()]
-    headers = {"X-API-Key": "key", "X-Trace": "abc"}
-    with patch(WS_CONNECT, side_effect=sessions) as ws_connect:
-        conn = connect_direct(
-            "wss://compute.example.com/sql/org/session-id",
-            headers=headers,
-            read_timeout=READ_TIMEOUT,
-            results_format=ResultsFormat.JSON,
-            data_compression=DataCompression.BROTLI,
-            geometry_representation=GeometryRepresentation.WKB,
-            session_id="session-1",
-            stale_query_probe_seconds=SLOW_PROBE,
-        )
-        # Not inherited, and a later change to the caller's dict isn't sent.
-        conn.set_progress_handler(lambda info: None)
-        headers["X-Trace"] = "changed"
-        again = conn.reconnect()
-        third = again.reconnect()
-    try:
-        assert again is not conn
-        calls = ws_connect.call_args_list
-        assert len(calls) == 3
-        # The first connect still gets the caller's headers verbatim.
-        assert calls[0].kwargs["additional_headers"] is headers
-        for call in calls:
-            assert call.kwargs["uri"] == (
-                "wss://compute.example.com/sql/org/session-id/1.0.0"
-            )
-        for call in calls[1:]:
-            assert call.kwargs["additional_headers"] == {
-                "X-API-Key": "key",
-                "X-Trace": "abc",
-            }
-        ignored = {"ssl", "additional_headers"}
-        first_kwargs = {k: v for k, v in calls[0].kwargs.items() if k not in ignored}
-        for call in calls[1:]:
-            assert {
-                k: v for k, v in call.kwargs.items() if k not in ignored
-            } == first_kwargs
-        assert again._Connection__progress_handler is None
-        assert again._Connection__probe_after == SLOW_PROBE
-        assert again._Connection__session_id == "session-1"
-        # The connection's settings shape the attach request.
-        cursor = again.cursor()
-        cursor.attach(EID, store=STORE)
-        assert sessions[1].retrieves()[0] == {
-            "kind": "retrieve_results",
-            "execution_id": EID,
-            "format": "json",
-            "compression": "brotli",
-            "geometry": "wkb",
-            "attach": True,
-        }
-    finally:
-        for connection in (conn, again, third):
-            connection.close()
-
-
-@patch("wherobots.db.driver.requests.get")
-@patch("wherobots.db.driver.requests.post")
-def test_reconnect_after_connect_goes_straight_to_the_websocket(mock_post, mock_get):
-    post_resp = MagicMock()
-    post_resp.url = "https://api.example.com/sql/session/test-id"
-    mock_post.return_value = post_resp
-    get_resp = MagicMock()
-    get_resp.json.return_value = {
-        "status": "READY",
-        "appMeta": {"url": "https://compute.example.com/sql/org/session-id"},
-    }
-    mock_get.return_value = get_resp
-    with patch(WS_CONNECT, side_effect=[Session(), Session()]) as ws_connect:
-        conn = connect(api_key="key", stale_query_probe_seconds=PROBE)
-        again = conn.reconnect()
-    try:
-        # No new session lookup: a session that's gone must fail fast.
-        assert mock_post.call_count == 1
-        assert mock_get.call_count == 1
-        first, second = ws_connect.call_args_list
-        assert second.kwargs["uri"] == first.kwargs["uri"]
-        assert first.kwargs["uri"] == (
-            "wss://compute.example.com/sql/org/session-id/1.0.0"
-        )
-        assert second.kwargs["additional_headers"] == first.kwargs["additional_headers"]
-        assert second.kwargs["additional_headers"]["X-API-Key"] == "key"
-        assert again._Connection__session_id == "test-id"
-    finally:
-        conn.close()
-        again.close()
-
-
-def test_reconnect_honours_the_cancel_event():
-    cancel = threading.Event()
-    with patch(WS_CONNECT, side_effect=[Session()]) as ws_connect:
-        conn = connect_direct("wss://compute/sql", cancel_event=cancel)
-        cancel.set()
-        with pytest.raises(InterfaceError, match="cancelled by caller"):
-            conn.reconnect()
-    conn.close()
-    assert ws_connect.call_count == 1
-
-
-def test_reconnect_without_a_factory_is_not_supported():
-    conn = Connection(Session(), read_timeout=READ_TIMEOUT)
-    try:
-        with pytest.raises(NotSupportedError):
-            conn.reconnect()
-    finally:
-        conn.close()
-
-
-def test_lost_query_is_recovered_by_reconnecting_and_attaching():
-    lost, recovered = Session(), new_session("running")
-    with patch(WS_CONNECT, side_effect=[lost, recovered]):
-        conn = connect_direct(
-            "wss://compute/sql",
-            read_timeout=READ_TIMEOUT,
-            session_id="session-1",
-            stale_query_probe_seconds=PROBE,
-            # The manual path, for when the connection doesn't reconnect.
-            reconnect_timeout_seconds=None,
-        )
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM t", store=STORE)
-        lost.incoming.put(ConnectionClosedError(None, None))
-        error = outcome(cursor).error
-        assert isinstance(error, ConnectionLostError)
-        conn.close()
-        again = conn.reconnect()
-    try:
-        assert error.execution_id == cursor.execution_id
-        recovered_cursor = again.cursor()
-        recovered_cursor.attach(error.execution_id, store=STORE)
-        recovered.put(
-            kind="state_updated",
-            execution_id=error.execution_id,
-            state="succeeded",
-            result_uri=RESULT_URI,
-            size=7,
-        )
-        assert outcome(recovered_cursor).error is None
-        assert recovered_cursor.get_store_result() == StoreResult(RESULT_URI, 7)
-    finally:
-        again.close()
