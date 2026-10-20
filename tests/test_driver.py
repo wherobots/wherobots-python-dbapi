@@ -192,6 +192,23 @@ class TestConnectRegionRuntime:
         _, kwargs = _run_connect_full(mock_post, mock_get)
         assert kwargs["stale_query_probe_seconds"] == 30.0
 
+    @pytest.mark.parametrize("reconnect_seconds", [None, 5.0])
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_reconnect_timeout_seconds_is_forwarded(
+        self, mock_post, mock_get, reconnect_seconds
+    ):
+        _, kwargs = _run_connect_full(
+            mock_post, mock_get, reconnect_timeout_seconds=reconnect_seconds
+        )
+        assert kwargs["reconnect_timeout_seconds"] == reconnect_seconds
+
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_reconnecting_defaults_to_60_seconds(self, mock_post, mock_get):
+        _, kwargs = _run_connect_full(mock_post, mock_get)
+        assert kwargs["reconnect_timeout_seconds"] == 60.0
+
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
     def test_omitted_region_runtime_not_sent(self, mock_post, mock_get):

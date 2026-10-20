@@ -24,3 +24,80 @@ class ProgrammingError(DatabaseError):
 
 class NotSupportedError(DatabaseError):
     pass
+
+
+class ConnectionLostError(OperationalError):
+    """The connection to the SQL session was lost while a query was pending.
+
+    A connection from ``connect()`` or ``connect_direct()`` first reconnects
+    by itself and re-attaches its pending queries; this means that failed
+    within ``reconnect_timeout_seconds``, or that reconnecting is turned off.
+    The query may still have run, or be running, on the SQL session: its
+    outcome, for a write whether it committed, is unknown. Raised by
+    ``Cursor.execute()`` itself, rather than by a fetch, it means the
+    connection was already lost and the statement was never sent.
+
+    Attributes:
+        session_id: The SQL session's ID, or None if the connection didn't
+            know it.
+        execution_id: The ID of the pending execution.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        session_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.session_id = session_id
+        self.execution_id = execution_id
+
+
+class ExecutionCancelledError(OperationalError):
+    """A re-attached execution was cancelled, and not by this connection.
+
+    The SQL session cancelled it before or while this connection re-attached
+    to it after reconnecting, for example because its grace period for a lost
+    connection ran out, or another client cancelled it. Its outcome is unknown: for a write, whether it
+    committed.
+
+    Attributes:
+        session_id: The SQL session's ID, or None if the connection didn't
+            know it.
+        execution_id: The ID of the execution.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        session_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.session_id = session_id
+        self.execution_id = execution_id
+
+
+class ExecutionNotFoundError(OperationalError):
+    """The SQL session has no record of an execution to re-attach to.
+
+    After reconnecting, the session didn't know the execution: the statement
+    didn't reach it before the connection was lost, the session restarted, or
+    it no longer tracks the execution. Its outcome can't be recovered.
+
+    Attributes:
+        session_id: The SQL session's ID, or None if the connection didn't
+            know it.
+        execution_id: The ID of the execution.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        session_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.session_id = session_id
+        self.execution_id = execution_id

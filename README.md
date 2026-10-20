@@ -200,6 +200,49 @@ Progress events are best-effort and may not be available for all query
 types or server versions. The handler is simply not invoked when no
 progress information is available.
 
+### Recovering from a lost connection
+
+If the WebSocket to the SQL session drops while queries are running (a
+network path failure, a keepalive timeout), the connection reconnects to
+the same SQL session by itself and re-attaches every pending query, so
+their results still arrive: there's nothing for your code to do. It keeps
+trying, with backoff, for up to `reconnect_timeout_seconds` (60 seconds by
+default; see below). It never starts a new session, and gives up at once
+if the session refuses the connection, for example because it's gone.
+While it reconnects, `execute()` and cancelling (closing a cursor, or
+executing on it) wait for it to finish.
+
+A re-attached query can still fail:
+
+* If the SQL session doesn't know the execution (the statement didn't
+    reach it before the connection dropped, or the session restarted),
+    fetching raises `ExecutionNotFoundError`, a subclass of
+    `OperationalError`.
+* If the SQL session cancelled the execution while the connection was
+    down (for example, its grace period for a lost connection ran out, or
+    another client cancelled it), fetching raises
+    `ExecutionCancelledError`, also an `OperationalError` subclass: its
+    outcome, including whether a write committed, is unknown. An execution
+    that you cancel yourself, by closing the cursor or executing on it,
+    completes with an empty result, as usual.
+* An older SQL session that doesn't support attaching still answers with
+    the execution's state, and the driver polls it for the outcome (see
+    `stale_query_probe_seconds` below). If such a session reports no
+    location for a stored result, because it predates reporting it or
+    because the stored result is empty, the driver can't tell which, and
+    fails the query with an `OperationalError`. With probes disabled, a
+    running execution on such a session fails right away.
+
+If the connection can't reconnect in time, or reconnecting is turned off
+(`reconnect_timeout_seconds=None`), fetching a pending query's outcome
+raises `ConnectionLostError`, another `OperationalError` subclass. The
+query may still have run, or be running, on the SQL session: its outcome,
+including whether a write committed, is unknown. The error's
+`execution_id` and `session_id` attributes identify it, and a cursor's
+`execution_id` property holds the ID of its current or last execution.
+(When `execute()` itself raises `ConnectionLostError`, the connection was
+already lost and the statement was never sent.)
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
@@ -290,3 +333,8 @@ users may find useful:
     for its state again, in case the query's completion event was lost.
     Repeat probes back off to at most 8 times this interval. Defaults to
     30 seconds; pass `None` to disable probing.
+* `reconnect_timeout_seconds`: how long the connection keeps trying to
+    reconnect to the same SQL session after losing its WebSocket (see
+    "Recovering from a lost connection" above). Defaults to 60 seconds,
+    which fits in the SQL session's 120-second grace period for the
+    queries of a lost connection; pass `None` to turn reconnecting off.

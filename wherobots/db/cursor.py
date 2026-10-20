@@ -95,6 +95,16 @@ class Cursor:
     def rowcount(self) -> int:
         return self.__rowcount
 
+    @property
+    def execution_id(self) -> str | None:
+        """The ID of this cursor's current or last execution.
+
+        ``None`` before the first ``execute()``, and after one that was
+        rejected before submission. Errors about an execution, such as
+        :class:`~wherobots.db.errors.ConnectionLostError`, carry the same ID.
+        """
+        return self.__current_execution_id
+
     def __in_flight_execution_id(self) -> str | None:
         """The current execution's id if its result has not yet arrived.
 

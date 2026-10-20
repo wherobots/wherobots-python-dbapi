@@ -23,6 +23,7 @@ from .constants import (
     DEFAULT_CLOSE_TIMEOUT_SECONDS,
     DEFAULT_ENDPOINT,
     DEFAULT_READ_TIMEOUT_SECONDS,
+    DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     DEFAULT_SESSION_TYPE,
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     DEFAULT_STALE_QUERY_PROBE_SECONDS,
@@ -129,6 +130,7 @@ def connect(
     extra_headers: Union[Dict[str, str], None] = None,
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
     session_key: Union[str, None] = None,
+    reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -161,6 +163,12 @@ def connect(
         and never one opened without a key. When a session of the key's own
         would exceed a quota, the API shares one under another key instead;
         the connection's ``session_fallback`` then says so.
+    :param reconnect_timeout_seconds: How long the connection keeps trying to
+        reconnect to the same SQL session after losing its WebSocket, then
+        re-attaches its pending queries, whose results still arrive. Only if
+        it can't reconnect in time do they fail, with ``ConnectionLostError``.
+        ``None`` disables reconnecting, as does an invalid value (non-numeric,
+        non-finite, or not positive): pending queries then fail at once.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -307,6 +315,7 @@ def connect(
         .rsplit("/", 1)[-1],
         stale_query_probe_seconds=stale_query_probe_seconds,
         session_fallback=session_fallback,
+        reconnect_timeout_seconds=reconnect_timeout_seconds,
     )
 
 
@@ -337,15 +346,35 @@ def connect_direct(
     session_id: str | None = None,
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
     session_fallback: str | None = None,
+    reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
+    After losing its WebSocket, the returned connection reconnects to the same
+    endpoint by itself, with the same headers, honouring ``cancel_event`` (see
+    ``reconnect_timeout_seconds``).
+
     :param stale_query_probe_seconds: See :func:`connect`.
     :param session_fallback: See :attr:`Connection.session_fallback`.
+    :param reconnect_timeout_seconds: See :func:`connect`.
     """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
     ssl_context.load_verify_locations(certifi.where())
+
+    def open_ws(
+        headers: Union[Dict[str, str], None], open_timeout: float
+    ) -> websockets.sync.client.ClientConnection:
+        _check_cancelled(cancel_event)
+        logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
+        return websockets.sync.client.connect(
+            uri=uri_with_protocol,
+            additional_headers=headers,
+            max_size=MAX_MESSAGE_SIZE,
+            open_timeout=open_timeout,
+            close_timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS,
+            ssl=ssl_context,
+        )
 
     @tenacity.retry(
         stop=tenacity.stop_after_attempt(5),
@@ -362,16 +391,7 @@ def connect_direct(
         reraise=True,
     )
     def ws_connect() -> websockets.sync.client.ClientConnection:
-        _check_cancelled(cancel_event)
-        logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-        return websockets.sync.client.connect(
-            uri=uri_with_protocol,
-            additional_headers=headers,
-            max_size=MAX_MESSAGE_SIZE,
-            open_timeout=DEFAULT_HTTP_TIMEOUT,
-            close_timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS,
-            ssl=ssl_context,
-        )
+        return open_ws(headers, DEFAULT_HTTP_TIMEOUT)
 
     try:
         ws = ws_connect()
@@ -379,6 +399,26 @@ def connect_direct(
         raise
     except Exception as e:
         raise InterfaceError("Failed to connect to SQL session!") from e
+
+    # Snapshot a dict of headers, so a reconnect sends what this connection
+    # sent even if the caller later mutates it.
+    reconnect_headers = dict(headers) if isinstance(headers, dict) else headers
+
+    def open_transport(timeout: float) -> websockets.sync.client.ClientConnection:
+        # A single attempt: the connection retries until its own deadline.
+        # Straight to the same session's WebSocket: connect() resolves the
+        # session through the REST API, which could start a new session when
+        # this one is gone. A dead session must fail fast instead.
+        try:
+            return open_ws(reconnect_headers, min(DEFAULT_HTTP_TIMEOUT, timeout))
+        except websockets.exceptions.InvalidStatus as e:
+            status = e.response.status_code
+            if 400 <= status < 500 and status not in (408, 429):
+                # Gone, or no longer authorized: retrying can't help.
+                raise InterfaceError(
+                    f"SQL session refused the connection (HTTP {status})"
+                ) from e
+            raise
 
     return Connection(
         ws,
@@ -389,4 +429,6 @@ def connect_direct(
         session_id=session_id,
         stale_query_probe_seconds=stale_query_probe_seconds,
         session_fallback=session_fallback,
+        transport_factory=open_transport,
+        reconnect_timeout_seconds=reconnect_timeout_seconds,
     )

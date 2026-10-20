@@ -22,6 +22,11 @@ DEFAULT_STALE_QUERY_PROBE_SECONDS: float = 30.0
 # The API sets this on its answer to a session request when it gave the request
 # a session under another key than its own, naming why ("quota").
 SESSION_FALLBACK_HEADER: str = "X-Wherobots-Sql-Session-Fallback"
+# How long the driver keeps trying to reconnect to the SQL session after losing
+# the connection. It must fit, along with the up to ~40s that keepalive takes
+# to notice a dead connection, in the session's grace period for orphaned
+# executions (120s by default), after which the session cancels them.
+DEFAULT_RECONNECT_TIMEOUT_SECONDS: float = 60.0
 
 MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")
