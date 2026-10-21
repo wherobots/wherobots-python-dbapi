@@ -316,6 +316,31 @@ class TestConnectCancelEvent:
         _, kwargs = mock_post.call_args
         assert kwargs["timeout"] == DEFAULT_HTTP_TIMEOUT
 
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_error_keeps_suggestion(self, mock_post):
+        """A refused session's error relays the API's suggestion."""
+        post_resp = MagicMock()
+        post_resp.status_code = 403
+        post_resp.raise_for_status.side_effect = requests.HTTPError(response=post_resp)
+        post_resp.json.return_value = {
+            "errors": [
+                {
+                    "message": "Insufficient Quota",
+                    "details": "The total requested cpu exceed the quota",
+                    "suggestion": "Contact us to request a quota increase.",
+                }
+            ]
+        }
+        mock_post.return_value = post_resp
+
+        with pytest.raises(InterfaceError) as exc_info:
+            connect(api_key="test-key")
+
+        assert str(exc_info.value) == (
+            "Failed to create SQL session: Insufficient Quota: The total "
+            "requested cpu exceed the quota. Contact us to request a quota increase."
+        )
+
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
     def test_http_timeout_on_get(self, mock_post, mock_get):

@@ -239,7 +239,11 @@ def connect(
             info = e.response.json()
             errors = info.get("errors", [])
             if errors and isinstance(errors, list):
-                details = f"{errors[0]['message']}: {errors[0]['details']}"
+                error = errors[0]
+                details = f"{error['message']}: {error['details']}"
+                # The way out of the error, e.g. how to raise a quota.
+                if suggestion := error.get("suggestion"):
+                    details = f"{details.rstrip('.')}. {suggestion}"
         except requests.JSONDecodeError:
             pass
         raise InterfaceError(f"Failed to create SQL session: {details}") from e
