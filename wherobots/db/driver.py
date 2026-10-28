@@ -46,6 +46,8 @@ from .types import (
     ResultsFormat,
 )
 
+logger = logging.getLogger(__name__)
+
 apilevel = "2.0"
 threadsafety = 1
 paramstyle: Final[str] = PARAM_STYLE
@@ -198,7 +200,7 @@ def connect(
     runtime_id = runtime.value if isinstance(runtime, Runtime) else runtime
     region_name = region.value if isinstance(region, Region) else region
 
-    logging.info(
+    logger.info(
         "Requesting %s%s runtime %sin %s from %s ...",
         "new " if force_new else "",
         runtime_id or "org-default",
@@ -263,7 +265,7 @@ def connect(
         None,
     )
     if session_fallback is not None:
-        logging.warning(
+        logger.warning(
             "The API shared a SQL session under another key (%s).", session_fallback
         )
 
@@ -288,19 +290,19 @@ def connect(
         r.raise_for_status()
         payload = r.json()
         status = AppStatus(payload.get("status"))
-        logging.info(" ... %s", status)
+        logger.info(" ... %s", status)
         if status.is_starting():
             raise tenacity.TryAgain("SQL Session is not ready yet")
         elif status == AppStatus.READY:
             return payload["appMeta"]["url"]
         else:
-            logging.error("SQL session creation failed: %s; should not retry.", status)
+            logger.error("SQL session creation failed: %s; should not retry.", status)
             raise OperationalError(f"Failed to create SQL session: {status}")
 
     try:
-        logging.info("Getting SQL session status from %s ...", session_id_url)
+        logger.info("Getting SQL session status from %s ...", session_id_url)
         session_uri = get_session_uri()
-        logging.debug("SQL session URI from app status: %s", session_uri)
+        logger.debug("SQL session URI from app status: %s", session_uri)
     except InterfaceError:
         raise
     except Exception as e:
@@ -370,7 +372,7 @@ def connect_direct(
         headers: Union[Dict[str, str], None], open_timeout: float
     ) -> websockets.sync.client.ClientConnection:
         _check_cancelled(cancel_event)
-        logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
+        logger.info("Connecting to SQL session at %s ...", uri_with_protocol)
         return websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,

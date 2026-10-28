@@ -43,6 +43,8 @@ from .types import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 ProgressHandler = Callable[[ProgressInfo], None]
 """A callable invoked with a :class:`ProgressInfo` on every progress event."""
 
@@ -310,7 +312,7 @@ class Connection:
             and self.__reconnect_within is None
             and reconnect_timeout_seconds is not None
         ):
-            logging.warning(
+            logger.warning(
                 "Invalid reconnect_timeout_seconds (%s); automatic reconnection "
                 "disabled.",
                 _describe_invalid(reconnect_timeout_seconds),
@@ -326,7 +328,7 @@ class Connection:
         self.__progress_handler: ProgressHandler | None = None
         self.__probe_after = _positive_seconds(stale_query_probe_seconds)
         if self.__probe_after is None and stale_query_probe_seconds is not None:
-            logging.warning(
+            logger.warning(
                 "Invalid stale_query_probe_seconds (%s); stale-query probes disabled.",
                 _describe_invalid(stale_query_probe_seconds),
             )
@@ -435,7 +437,7 @@ class Connection:
 
     def __main_loop(self) -> None:
         """Main background loop listening for messages from the SQL session."""
-        logging.info("Starting background connection handling loop...")
+        logger.info("Starting background connection handling loop...")
         try:
             # The receive loop returns when the transport is gone: carry on over
             # a new one, or stop.
@@ -461,13 +463,13 @@ class Connection:
                 # Expected, retry next time
                 continue
             except websockets.exceptions.ConnectionClosed:
-                logging.info("SQL session connection closed.")
+                logger.info("SQL session connection closed.")
                 return
             except _TransportError:
-                logging.exception("SQL session transport failed")
+                logger.exception("SQL session transport failed")
                 return
             except Exception as e:
-                logging.exception("Error handling message from SQL session", exc_info=e)
+                logger.exception("Error handling message from SQL session", exc_info=e)
 
     def __probe_stale_queries(self) -> None:
         """Re-ask the session about queries that have gone quiet.
@@ -546,7 +548,7 @@ class Connection:
                     attach.probed = True
                 # Space the next probe from this one, not from the last event.
                 watch.last_activity = now
-                logging.info(
+                logger.info(
                     "No events for query %s in %.1fs while %s; probed the SQL "
                     "session for its state (probe %d%s).",
                     query.execution_id,
@@ -556,7 +558,7 @@ class Connection:
                     ", previous probe unanswered" if unanswered else "",
                 )
         except Exception:
-            logging.exception("Stale-query probe failed")
+            logger.exception("Stale-query probe failed")
 
     def __reconnect(self) -> bool:
         """Connect to the same SQL session again after losing the transport.
@@ -592,7 +594,7 @@ class Connection:
         if not continued:
             self.__recovery_deadline = now + within
             self.__reconnect_delay = _RECONNECT_FIRST_DELAY_SECONDS
-        logging.warning(
+        logger.warning(
             "Lost the connection to SQL session %s with %d pending queries; "
             "reconnecting for up to %.0fs ...",
             self.__session_id or "(unknown)",
@@ -604,7 +606,7 @@ class Connection:
         try:
             abort_connection(lost)
         except Exception:
-            logging.debug("Could not abort the lost transport", exc_info=True)
+            logger.debug("Could not abort the lost transport", exc_info=True)
         with self.__send_lock:
             ws = self.__open_transport(factory, back_off_first=continued)
             if ws is None:
@@ -639,7 +641,7 @@ class Connection:
                     return None
             remaining = self.__recovery_deadline - time.monotonic()
             if remaining <= 0:
-                logging.error(
+                logger.error(
                     "Could not reconnect to SQL session %s in time (%d attempts).",
                     session,
                     attempts,
@@ -649,12 +651,12 @@ class Connection:
             try:
                 return factory(remaining)
             except InterfaceError as error:
-                logging.error(
+                logger.error(
                     "Could not reconnect to SQL session %s: %s", session, error
                 )
                 return None
             except Exception as error:
-                logging.info(
+                logger.info(
                     "Reconnect attempt %d to SQL session %s failed: %s",
                     attempts,
                     session,
@@ -689,10 +691,10 @@ class Connection:
             try:
                 abort_connection(ws)
             except Exception:
-                logging.debug("Could not abort the new transport", exc_info=True)
+                logger.debug("Could not abort the new transport", exc_info=True)
             return False
         self.__reconnected_at = time.monotonic()
-        logging.info(
+        logger.info(
             "Reconnected to SQL session %s; re-attaching %d pending queries.",
             self.__session_id or "(unknown)",
             len(pending),
@@ -709,11 +711,11 @@ class Connection:
                 ws.send(json.dumps(request))
         except (websockets.exceptions.ConnectionClosed, OSError):
             # Lost again already: the receive loop notices, and reconnects.
-            logging.warning("Lost the new SQL session connection while re-attaching.")
+            logger.warning("Lost the new SQL session connection while re-attaching.")
             try:
                 abort_connection(ws)
             except Exception:
-                logging.debug("Could not abort the new transport", exc_info=True)
+                logger.debug("Could not abort the new transport", exc_info=True)
         return True
 
     def __connection_error(self, execution_id: str) -> ConnectionLostError:
@@ -754,7 +756,7 @@ class Connection:
                         )
                     )
                 except Exception:
-                    logging.exception(
+                    logger.exception(
                         "Could not deliver connection failure to query handler"
                     )
         finally:
@@ -784,12 +786,12 @@ class Connection:
                 self.__ws.close()
                 return
             except Exception:
-                logging.debug("Graceful close failed; aborting", exc_info=True)
+                logger.debug("Graceful close failed; aborting", exc_info=True)
         try:
             abort_connection(self.__ws)
         except Exception:
             # The adapter still closes the socket object in its finally block.
-            logging.exception("Could not abort SQL session transport")
+            logger.exception("Could not abort SQL session transport")
 
     def __listen(self) -> None:
         """Waits for the next message from the SQL session and processes it.
@@ -850,11 +852,11 @@ class Connection:
                     )
                 )
             except Exception:
-                logging.exception("Progress handler raised an exception")
+                logger.exception("Progress handler raised an exception")
             return
 
         if not query:
-            logging.warning(
+            logger.warning(
                 "Received %s event for unknown execution ID %s", kind, execution_id
             )
             return
@@ -869,12 +871,12 @@ class Connection:
                 if probe_reply and result.error is None:
                     if claimed.watch.results_requested:
                         # The normal retrieve's reply may have won the race.
-                        logging.info(
+                        logger.info(
                             "Query %s results arrived after a stale-query probe.",
                             execution_id,
                         )
                     else:
-                        logging.info(
+                        logger.info(
                             "Query %s recovered from a stale-query probe reply.",
                             execution_id,
                         )
@@ -891,13 +893,13 @@ class Connection:
                 "The statement may have completed; verify the operation before "
                 "retrying writes."
             )
-            logging.error("%s", message)
+            logger.error("%s", message)
             complete_query(ExecutionResult(error=OperationalError(message)))
 
         def complete_with_store_result(result_uri: str) -> None:
             # Results are stored in cloud storage
             store_result = StoreResult(result_uri=result_uri, size=message.get("size"))
-            logging.info(
+            logger.info(
                 "Query %s results stored at: %s (size: %s)",
                 execution_id,
                 result_uri,
@@ -910,21 +912,21 @@ class Connection:
             # The session's answer to an attached query that leaves nothing
             # to wait for on this connection.
             query.state = ExecutionState.FAILED
-            logging.warning("%s", error)
+            logger.warning("%s", error)
             complete_query(ExecutionResult(error=error))
 
         # Incoming state transitions are handled here.
         if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
             try:
                 query.state = ExecutionState[message["state"].upper()]
-                logging.info("Query %s is now %s.", execution_id, query.state)
+                logger.info("Query %s is now %s.", execution_id, query.state)
             except (KeyError, AttributeError, TypeError) as error:
                 fail_query("interpret", error)
                 return
 
             if attach_reply and attach is not None:
                 if attach.acknowledged:
-                    logging.info("Attached to execution %s.", execution_id)
+                    logger.info("Attached to execution %s.", execution_id)
                 elif query.state in (ExecutionState.PENDING, ExecutionState.RUNNING):
                     # An older session ignored the attach: the execution's
                     # later events go to the lost connection. Only probes can
@@ -940,7 +942,7 @@ class Connection:
                             )
                         )
                         return
-                    logging.warning(
+                    logger.warning(
                         "SQL session doesn't support attaching; polling "
                         "execution %s for its outcome.",
                         execution_id,
@@ -957,7 +959,7 @@ class Connection:
 
                     if query.store is not None:
                         # Store was configured but produced no results (empty result set)
-                        logging.info(
+                        logger.info(
                             "Query %s completed with store configured but no results to store.",
                             execution_id,
                         )
@@ -992,7 +994,7 @@ class Connection:
                     if attach.acknowledged:
                         # A session that supports attaching also echoes the
                         # result location, so this is an empty store result.
-                        logging.info(
+                        logger.info(
                             "Query %s completed with store configured but no "
                             "results to store.",
                             execution_id,
@@ -1027,7 +1029,7 @@ class Connection:
                     # the answer won't change. Known limitation: an empty store
                     # result whose terminal event was lost can't be recovered.
                     query.watch.probeable = False
-                    logging.warning(
+                    logger.warning(
                         "Query %s succeeded, but the SQL session's reply has no "
                         "result location (older SQL session, or an empty store "
                         "result); cannot recover it, still waiting.",
@@ -1036,7 +1038,7 @@ class Connection:
                     return
 
                 if results is None or results == {}:
-                    logging.warning("Got no results back from %s.", execution_id)
+                    logger.warning("Got no results back from %s.", execution_id)
                     query.state = ExecutionState.COMPLETED
                     complete_query(ExecutionResult())
                     return
@@ -1072,10 +1074,10 @@ class Connection:
                             session_id=self.__session_id,
                             execution_id=execution_id,
                         )
-                        logging.warning("%s", cancelled)
+                        logger.warning("%s", cancelled)
                         complete_query(ExecutionResult(error=cancelled))
                         return
-                logging.info(
+                logger.info(
                     "Query %s has been cancelled; returning empty results.",
                     execution_id,
                 )
@@ -1135,7 +1137,7 @@ class Connection:
                 # here), so keep waiting either way. After the normal
                 # retrieve, though, there's nothing left to wait for.
                 query.watch.probeable = False
-                logging.warning(
+                logger.warning(
                     "SQL session no longer tracks execution %s (likely evicted "
                     "from its result cache); cannot probe it, waiting for its "
                     "terminal event.",
@@ -1145,13 +1147,13 @@ class Connection:
             query.state = ExecutionState.FAILED
             complete_query(ExecutionResult(error=OperationalError(error)))
         else:
-            logging.warning("Received unknown %s event!", kind)
+            logger.warning("Received unknown %s event!", kind)
 
     def _handle_results(self, execution_id: str, results: Dict[str, Any]) -> Any:
         result_bytes = results.get("result_bytes")
         result_format = results.get("format")
         result_compression = results.get("compression")
-        logging.info(
+        logger.info(
             "Received %d bytes of %s-compressed %s results from %s.",
             len(result_bytes),
             result_compression,
@@ -1187,8 +1189,8 @@ class Connection:
         # Only compute the redacted request (json.dumps + sqlparse parse) when
         # DEBUG is actually enabled; the log argument is evaluated eagerly, so an
         # unguarded call would redact on every request even with DEBUG off.
-        if logging.getLogger().isEnabledFor(logging.DEBUG):
-            logging.debug("Request: %s", self.__redacted_request(message))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Request: %s", self.__redacted_request(message))
         if not self.__send_lock.acquire(blocking=blocking):
             return False
         try:
@@ -1243,7 +1245,7 @@ class Connection:
         try:
             abort_connection(ws)
         except Exception:
-            logging.debug("Could not abort the lost transport", exc_info=True)
+            logger.debug("Could not abort the lost transport", exc_info=True)
         return True
 
     @staticmethod
@@ -1298,7 +1300,7 @@ class Connection:
 
         # Redact literal values before logging: this driver is embedded by other
         # services, so raw SQL here would leak into their log streams (WBC-139).
-        logging.info(
+        logger.info(
             "Executing SQL query %s (%s): %s",
             execution_id,
             get_statement_type(sql),
@@ -1352,7 +1354,7 @@ class Connection:
             # A probe only asks; the reply carries the query's actual state.
             query.state = ExecutionState.RESULTS_REQUESTED
             query.watch.results_requested = True
-            logging.info("Requesting results from %s ...", execution_id)
+            logger.info("Requesting results from %s ...", execution_id)
         return self.__send(request, blocking=not probe)
 
     def __cancel_query(self, execution_id: str) -> None:
@@ -1365,5 +1367,5 @@ class Connection:
             "kind": RequestKind.CANCEL.value,
             "execution_id": execution_id,
         }
-        logging.info("Cancelling query %s...", execution_id)
+        logger.info("Cancelling query %s...", execution_id)
         self.__send(request)

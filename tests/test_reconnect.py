@@ -236,6 +236,39 @@ def test_lost_query_completes_over_the_new_transport(caplog):
     ) in messages
 
 
+def test_reconnect_logs_reach_an_app_that_enables_only_the_connection_logger(caplog):
+    # An app that keeps root at WARNING and enables this module's logger at
+    # INFO still sees the reconnect and the re-attach.
+    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.INFO, logger="wherobots.db.connection")
+    lost, again = Session(), new_session("running")
+    conn = open_connection(lost, Factory(again))
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t", store=STORE)
+        execution_id = cursor.execution_id
+        lost.drop()
+        assert wait_until(lambda: again.requests("retrieve_results"))
+        again.put(
+            kind="state_updated",
+            execution_id=execution_id,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=7,
+        )
+        assert outcome(cursor).error is None
+    finally:
+        conn.close()
+    records = {r.getMessage(): r.name for r in caplog.records}
+    assert (
+        records["Reconnected to SQL session session-1; re-attaching 1 pending queries."]
+        == "wherobots.db.connection"
+    )
+    assert records[f"Attached to execution {execution_id}."] == (
+        "wherobots.db.connection"
+    )
+
+
 def test_result_lost_with_the_connection_arrives_in_the_attach_reply():
     # The query succeeded, but the terminal event went to the lost connection.
     again = Session(
