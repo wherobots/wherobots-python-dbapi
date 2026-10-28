@@ -142,7 +142,7 @@ The `Store` class supports the following options:
 * `single`: if `True`, write results to a single file instead of
     multiple partitioned files (default: `False`)
 * `generate_presigned_url`: if `True`, generate a presigned URL for
-    downloading results (default: `False`)
+    downloading results (default: `False`). Requires `single=True`.
 
 Use `Store.for_download()` as a convenient shorthand for storing results
 as a single Parquet file with a presigned URL.
