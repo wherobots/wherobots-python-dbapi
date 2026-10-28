@@ -7,8 +7,8 @@ runtime and execute Spatial SQL queries.
 ## PEP 249 DB-API 2.0 Compliance
 
 This driver implements the [PEP 249](https://peps.python.org/pep-0249/)
-Python Database API Specification v2.0 and exposes the following
-module-level globals:
+Python Database API Specification v2.0. Its module-level globals are
+defined in `wherobots.db.driver` and are not re-exported from `wherobots.db`:
 
 | Global | Value | Meaning |
 |---|---|---|
@@ -103,7 +103,7 @@ with connect(...) as conn:
         results = curr.fetchall()
 ```
 
-It also implements the `close()` method, as suggested by the PEP-2049
+It also implements the `close()` method, as suggested by the PEP 249
 specification, to support situations where the cursor is wrapped in a
 `contextmanager.closing()`.
 
@@ -137,12 +137,12 @@ with connect(
 
 The `Store` class supports the following options:
 
-* `format`: output format - `StorageFormat.PARQUET` (default),
+* `format` (required): output format - `StorageFormat.PARQUET`,
     `StorageFormat.CSV`, or `StorageFormat.GEOJSON`
 * `single`: if `True`, write results to a single file instead of
-    multiple partitioned files (default: `True`)
+    multiple partitioned files (default: `False`)
 * `generate_presigned_url`: if `True`, generate a presigned URL for
-    downloading results (default: `False`)
+    downloading results (default: `False`). Requires `single=True`.
 
 Use `Store.for_download()` as a convenient shorthand for storing results
 as a single Parquet file with a presigned URL.
@@ -250,8 +250,9 @@ parameter, passing in one of the `Runtime` enum values. For more
 information on runtime sizing and selection, please consult the
 [Wherobots product documentation](https://docs.wherobots.com).
 
-You must also specify in which region your SQL session should execute
-into. Wherobots Cloud supports the following compute regions:
+You can also choose the region your SQL session runs in with the
+`region` parameter. When omitted, your organization's configured default
+region is used. Wherobots Cloud supports the following compute regions:
 
 * `aws-us-east-1`: AWS US East 1 (N. Virginia)
 * `aws-us-east-2`: AWS US East 2 (Ohio)
@@ -263,12 +264,6 @@ into. Wherobots Cloud supports the following compute regions:
 > The `aws-us-west-2` region is available to all Wherobots Cloud users
 > and customers; other regions are currently reserved to Professional
 > Edition customers.
-
-> [!WARNING]
-> To prepare for the expansion of Wherobots Cloud to new regions and cloud providers, the `region` parameter will become mandatory in a future SDK version.
-> Before this support for new regions is added, we will release an updated version of the SDK.
-> While you can continue using an older SDK version for your development,
-> any new or existing SQL session you initialize without specifying the `region` parameter will be hosted in the `aws-us-west-2` region.
 
 ### Advanced parameters
 
