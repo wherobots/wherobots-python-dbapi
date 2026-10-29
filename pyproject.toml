@@ -29,7 +29,9 @@ Tracker = "https://github.com/wherobots/wherobots-python-dbapi-driver/issues"
 
 [dependency-groups]
 dev = [
-    "pre-commit",
+    # Local-only hook runner (CI installs pre-commit itself). Its virtualenv
+    # dependency pulls filelock, whose security fixes require Python 3.11+.
+    "pre-commit; python_version >= '3.11'",
     "pytest>=8.0.2",
     "pyarrow>=14.0.2",
     "pandas",
