@@ -11,13 +11,13 @@ dependencies = [
     "requests>=2.31.0",
     "websockets>=13.0",
     "tenacity>=8.2.3",
-    "cbor2>=5.6.3",
+    "cbor2>=5.9.0",
     "StrEnum>=0.4.15,<0.5",
     "pyarrow>=14.0.2",
     "pandas",
     "types-requests>=2.31.0",
     "pandas-stubs>=2.0.3.230814",
-    "sqlparse>=0.5.0",
+    "sqlparse>=0.6.0",
 ]
 
 [project.optional-dependencies]
