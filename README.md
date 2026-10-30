@@ -243,6 +243,21 @@ including whether a write committed, is unknown. The error's
 (When `execute()` itself raises `ConnectionLostError`, the connection was
 already lost and the statement was never sent.)
 
+### Logging
+
+The driver logs through the standard `logging` module, on one logger per
+module under `wherobots.db`: `wherobots.db.connection` for queries, lost
+connections and re-attaches, and `wherobots.db.driver` for creating and
+connecting to SQL sessions. To see when a connection reconnects and
+re-attaches without raising the root logger's level, enable INFO on the
+connection logger:
+
+```python
+import logging
+
+logging.getLogger("wherobots.db.connection").setLevel(logging.INFO)
+```
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
