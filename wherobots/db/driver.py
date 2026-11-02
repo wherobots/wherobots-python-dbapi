@@ -12,7 +12,7 @@ import platform
 import requests
 import tenacity
 import threading
-from typing import Any, Final, Union, Dict
+from typing import Any, Callable, Final, Union, Dict
 import urllib.parse
 import websockets.exceptions
 import websockets.sync.client
@@ -282,7 +282,7 @@ def connect(
         before_sleep=lambda _: _check_cancelled(cancel_event),
         reraise=True,
     )
-    def get_session_uri() -> str:
+    def get_ready_session() -> Dict[str, Any]:
         _check_cancelled(cancel_event)
         r = requests.get(session_id_url, headers=headers, timeout=DEFAULT_HTTP_TIMEOUT)
         r.raise_for_status()
@@ -292,19 +292,42 @@ def connect(
         if status.is_starting():
             raise tenacity.TryAgain("SQL Session is not ready yet")
         elif status == AppStatus.READY:
-            return payload["appMeta"]["url"]
+            return payload
         else:
             logging.error("SQL session creation failed: %s; should not retry.", status)
             raise OperationalError(f"Failed to create SQL session: {status}")
 
     try:
         logging.info("Getting SQL session status from %s ...", session_id_url)
-        session_uri = get_session_uri()
+        session = get_ready_session()
+        session_uri = session["appMeta"]["url"]
         logging.debug("SQL session URI from app status: %s", session_uri)
     except InterfaceError:
         raise
     except Exception as e:
         raise InterfaceError("Could not acquire SQL session!", e)
+
+    session_id = (
+        urllib.parse.urlparse(session_id_url).path.rstrip("/").rsplit("/", 1)[-1]
+    )
+    # The key the API created the session under, which differs from the one
+    # asked for after a fallback, or when the organization ignores keys.
+    api_payload = session.get("apiPayload")
+    session_key_on_api = (
+        api_payload.get("sessionKey") if isinstance(api_payload, dict) else None
+    )
+    # Snapshot the headers, as for reconnecting: a stop sends what this
+    # connection sent even if the caller later mutates them.
+    stop_headers = dict(headers)
+
+    def stop_session() -> None:
+        try:
+            resp = requests.delete(
+                session_id_url, headers=stop_headers, timeout=DEFAULT_HTTP_TIMEOUT
+            )
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            raise InterfaceError(f"Failed to stop SQL session {session_id}: {e}") from e
 
     return connect_direct(
         uri=http_to_ws(session_uri),
@@ -314,12 +337,12 @@ def connect(
         data_compression=data_compression,
         geometry_representation=geometry_representation,
         cancel_event=cancel_event,
-        session_id=urllib.parse.urlparse(session_id_url)
-        .path.rstrip("/")
-        .rsplit("/", 1)[-1],
+        session_id=session_id,
         stale_query_probe_seconds=stale_query_probe_seconds,
         session_fallback=session_fallback,
         reconnect_timeout_seconds=reconnect_timeout_seconds,
+        session_key=session_key_on_api,
+        session_stopper=stop_session,
     )
 
 
@@ -351,6 +374,8 @@ def connect_direct(
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
     session_fallback: str | None = None,
     reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+    session_key: str | None = None,
+    session_stopper: Union[Callable[[], None], None] = None,
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
@@ -361,6 +386,10 @@ def connect_direct(
     :param stale_query_probe_seconds: See :func:`connect`.
     :param session_fallback: See :attr:`Connection.session_fallback`.
     :param reconnect_timeout_seconds: See :func:`connect`.
+    :param session_key: See :attr:`Connection.session_key`.
+    :param session_stopper: Asks the API to stop the SQL session; see
+        :meth:`Connection.stop_session`. ``connect()`` supplies it. Without it,
+        the connection can't stop its session.
     """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -435,4 +464,6 @@ def connect_direct(
         session_fallback=session_fallback,
         transport_factory=open_transport,
         reconnect_timeout_seconds=reconnect_timeout_seconds,
+        session_key=session_key,
+        session_stopper=session_stopper,
     )

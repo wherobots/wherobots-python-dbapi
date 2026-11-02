@@ -286,6 +286,8 @@ class Connection:
             Callable[[float], websockets.sync.client.ClientConnection] | None
         ) = None,
         reconnect_timeout_seconds: float | None = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+        session_key: str | None = None,
+        session_stopper: Callable[[], None] | None = None,
     ):
         """
         :param transport_factory: Opens a new WebSocket to the same SQL session, given
@@ -297,6 +299,10 @@ class Connection:
         :param reconnect_timeout_seconds: How long to keep trying to reconnect after
             losing the transport. ``None``, or an invalid value (non-numeric,
             non-finite, or not positive), disables automatic reconnection.
+        :param session_key: See :attr:`session_key`.
+        :param session_stopper: Asks the API to stop this connection's SQL session,
+            raising ``InterfaceError`` if it can't. Without it, :meth:`stop_session`
+            raises ``NotSupportedError``.
         """
         self.__ws = ws
         self.__transport_factory = transport_factory
@@ -343,6 +349,8 @@ class Connection:
 
         self.__session_id = session_id
         self.__session_fallback = session_fallback
+        self.__session_key = session_key
+        self.__session_stopper = session_stopper
         self.__lock = threading.Lock()
         self.__send_lock = threading.Lock()
         self.__shutdown_done = threading.Event()
@@ -369,6 +377,39 @@ class Connection:
         of the key's own would have exceeded a quota, so the connection shares
         another of the user's sessions."""
         return self.__session_fallback
+
+    @property
+    def session_key(self) -> str | None:
+        """The session key the API created this connection's SQL session
+        under, as the API reports it, or None for a session without a key.
+        It differs from the ``session_key`` passed to ``connect()`` when the
+        API shared another key's session (see :attr:`session_fallback`), or
+        ignored keys for the organization. None for a connection from
+        ``connect_direct()``, which never asks the API."""
+        return self.__session_key
+
+    def stop_session(self) -> None:
+        """Close this connection, then ask the API to stop its SQL session.
+
+        The session stops within seconds instead of after its inactivity
+        timeout, for every connection on it: another connection that shares
+        the session loses it too. Check :attr:`session_key` first if other
+        clients may share it. Stopping a session that already stopped
+        succeeds.
+
+        :raises NotSupportedError: The connection came from
+            ``connect_direct()``, which has no API to ask. The connection
+            stays open.
+        :raises InterfaceError: The API refused or couldn't be reached. The
+            connection is closed, and the session stops after its inactivity
+            timeout instead.
+        """
+        if self.__session_stopper is None:
+            raise NotSupportedError(
+                "Only a connection from connect() can stop its SQL session"
+            )
+        self.close()
+        self.__session_stopper()
 
     def __enter__(self):
         return self

@@ -243,6 +243,39 @@ including whether a write committed, is unknown. The error's
 (When `execute()` itself raises `ConnectionLostError`, the connection was
 already lost and the statement was never sent.)
 
+### Stopping the SQL session
+
+Closing a connection leaves its SQL session running until
+`shutdown_after_inactive_seconds` pass with no connection on it, so that
+a later connection can reuse it. To stop it right away instead, for
+example at the end of a batch job, call `stop_session()`. It closes the
+connection, then asks the API to stop the session, which stops within
+seconds:
+
+```python
+conn = connect(api_key=..., session_key="nightly-build-1234")
+try:
+    ...  # run the job's queries
+finally:
+    if conn.session_key == "nightly-build-1234":
+        conn.stop_session()
+    else:
+        conn.close()
+```
+
+The session stops for every connection on it. Other clients may share a
+session, so check `conn.session_key` before stopping it: it's the key the
+API created the session under, which is your `session_key` only when the
+session is yours alone. It's `None` for a session without a key, and it
+differs from your key when the API shared another session (see
+`session_fallback` below).
+
+`stop_session()` raises `InterfaceError` if the API refuses or can't be
+reached; the connection is closed anyway, and the session stops after its
+inactivity timeout instead. Stopping a session that already stopped
+succeeds. A connection from `connect_direct()` has no API to ask, so its
+`stop_session()` raises `NotSupportedError` and leaves it open.
+
 ### Runtime and region selection
 
 You can chose the Wherobots runtime you want to use using the `runtime`
