@@ -253,22 +253,25 @@ connection, then asks the API to stop the session, which stops within
 seconds:
 
 ```python
-conn = connect(api_key=..., session_key="nightly-build-1234")
+run_key = f"nightly-build-{run_id}"  # unique to this run of the job
+conn = connect(api_key=..., session_key=run_key)
 try:
     ...  # run the job's queries
 finally:
-    if conn.session_key == "nightly-build-1234":
+    if conn.session_key == run_key:
         conn.stop_session()
     else:
         conn.close()
 ```
 
-The session stops for every connection on it. Other clients may share a
-session, so check `conn.session_key` before stopping it: it's the key the
-API created the session under, which is your `session_key` only when the
-session is yours alone. It's `None` for a session without a key, and it
-differs from your key when the API shared another session (see
-`session_fallback` below).
+The session stops for every connection on it, so stop only a session no
+other client uses. Every connection that asks with the same `session_key`
+can share a session, so give each run of the job a key of its own, for
+example one that includes a run ID. Then check `conn.session_key` before
+stopping: it's the key the API created the session under. It equals your
+key when the API kept the run on its own sessions, it's `None` for a
+session without a key, and it differs from your key when the API shared
+another session (see `session_fallback` below).
 
 `stop_session()` raises `InterfaceError` if the API refuses or can't be
 reached; the connection is closed anyway, and the session stops after its
