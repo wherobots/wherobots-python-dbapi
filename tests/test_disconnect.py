@@ -22,7 +22,12 @@ from websockets.uri import parse_uri
 from wherobots.db._transport import abort_connection
 from wherobots.db.connection import Connection, Query
 from wherobots.db.driver import connect_direct
-from wherobots.db.errors import OperationalError, ProgrammingError
+from wherobots.db.errors import (
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 from wherobots.db.types import ExecutionState
 
 
@@ -899,3 +904,50 @@ def test_connection_reports_its_session_and_fallback():
         assert plain.session_fallback is None
     finally:
         plain.close()
+
+
+def test_connection_reports_the_session_key_it_was_given():
+    conn = Connection(Transport(), session_key="dbt-run-1")
+    try:
+        assert conn.session_key == "dbt-run-1"
+    finally:
+        conn.close()
+    plain = Connection(Transport())
+    try:
+        assert plain.session_key is None
+    finally:
+        plain.close()
+
+
+def test_stop_session_closes_the_connection_then_asks_the_api():
+    ws = Transport()
+    closed_when_asked = []
+    conn = Connection(
+        ws,
+        session_id="session-1",
+        session_stopper=lambda: closed_when_asked.append(conn._Connection__closed),
+    )
+    conn.stop_session()
+    assert closed_when_asked == [True]
+    assert ws.closed.is_set()
+    assert not conn._Connection__thread.is_alive()
+
+
+def test_a_refused_stop_raises_and_leaves_the_connection_closed():
+    def refuse():
+        raise InterfaceError("Failed to stop SQL session session-1: 500")
+
+    conn = Connection(Transport(), session_id="session-1", session_stopper=refuse)
+    with pytest.raises(InterfaceError, match="session-1"):
+        conn.stop_session()
+    assert conn._Connection__closed
+
+
+def test_a_direct_connection_cannot_stop_its_session_and_stays_open():
+    conn = Connection(Transport())
+    try:
+        with pytest.raises(NotSupportedError):
+            conn.stop_session()
+        assert not conn._Connection__closed
+    finally:
+        conn.close()

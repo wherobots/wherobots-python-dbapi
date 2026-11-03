@@ -38,13 +38,18 @@ def _redirect(status_code, headers=None):
 
 
 def _mock_ready_session(
-    mock_post, mock_get, session_url=None, redirect_headers=None, history=None
+    mock_post,
+    mock_get,
+    session_url=None,
+    redirect_headers=None,
+    history=None,
+    api_payload=None,
 ):
     """Answer the session request with a followed 303 and a READY status.
 
     ``redirect_headers`` are the headers of the API's 303 answer, which
     `requests` keeps in the final response's history; ``history`` replaces
-    that whole history.
+    that whole history. ``api_payload`` is the session's stored request.
     """
     post_resp = MagicMock()
     post_resp.status_code = 200
@@ -63,6 +68,8 @@ def _mock_ready_session(
         "status": "READY",
         "appMeta": {"url": "https://compute.example.com/sql/org/session-id"},
     }
+    if api_payload is not None:
+        get_resp.json.return_value["apiPayload"] = api_payload
     mock_get.return_value = get_resp
 
 
@@ -72,6 +79,7 @@ def _run_connect_full(
     session_url=None,
     redirect_headers=None,
     history=None,
+    api_payload=None,
     **connect_kwargs,
 ):
     """Drive a successful connect().
@@ -80,7 +88,9 @@ def _run_connect_full(
     patched connect_direct) so tests can assert on both the HTTP POST and the
     WebSocket upgrade path.
     """
-    _mock_ready_session(mock_post, mock_get, session_url, redirect_headers, history)
+    _mock_ready_session(
+        mock_post, mock_get, session_url, redirect_headers, history, api_payload
+    )
 
     with patch("wherobots.db.driver.connect_direct") as mock_cd:
         mock_cd.return_value = MagicMock()
@@ -159,6 +169,79 @@ class TestConnectSessionKey:
         _, conn_kwargs = mock_conn.call_args
         assert conn_kwargs["session_id"] == "test-id"
         assert conn_kwargs["session_fallback"] == "quota"
+
+
+class TestStopSession:
+    """connect() hands the connection the session's key and a way to stop it."""
+
+    @pytest.mark.parametrize(
+        ("api_payload", "session_key"),
+        [
+            ({"sessionKey": "dbt-run-1", "sessionType": "multi"}, "dbt-run-1"),
+            ({"sessionKey": None}, None),
+            ({}, None),
+            (None, None),
+        ],
+        ids=["keyed", "keyless", "no key field", "no stored request"],
+    )
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_key_the_api_stored_reaches_the_connection(
+        self, mock_post, mock_get, api_payload, session_key
+    ):
+        _, cd_kwargs = _run_connect_full(
+            mock_post, mock_get, api_payload=api_payload, session_key="dbt-run-1"
+        )
+        assert cd_kwargs["session_key"] == session_key
+
+    @patch("wherobots.db.driver.requests.delete")
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_stopper_deletes_the_session_with_the_connect_headers(
+        self, mock_post, mock_get, mock_delete
+    ):
+        _, cd_kwargs = _run_connect_full(mock_post, mock_get)
+        mock_delete.assert_not_called()
+        cd_kwargs["session_stopper"]()
+        mock_delete.assert_called_once()
+        args, kwargs = mock_delete.call_args
+        assert args == ("https://api.example.com/sql/session/test-id",)
+        assert kwargs["headers"]["X-API-Key"] == "test-key"
+        assert kwargs["timeout"] == DEFAULT_HTTP_TIMEOUT
+
+    @pytest.mark.parametrize(
+        "failure",
+        [requests.HTTPError("404 Client Error"), requests.ConnectionError("down")],
+        ids=["refused", "unreachable"],
+    )
+    @patch("wherobots.db.driver.requests.delete")
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_a_failed_stop_is_an_interface_error_naming_the_session(
+        self, mock_post, mock_get, mock_delete, failure
+    ):
+        _, cd_kwargs = _run_connect_full(mock_post, mock_get)
+        if isinstance(failure, requests.HTTPError):
+            mock_delete.return_value.raise_for_status.side_effect = failure
+        else:
+            mock_delete.side_effect = failure
+        with pytest.raises(InterfaceError, match="test-id"):
+            cd_kwargs["session_stopper"]()
+
+    @patch("wherobots.db.driver.websockets.sync.client.connect")
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_the_connection_gets_the_key_and_the_stopper(
+        self, mock_post, mock_get, mock_ws
+    ):
+        """Through the real connect_direct, not around it."""
+        _mock_ready_session(mock_post, mock_get, api_payload={"sessionKey": "k"})
+        mock_ws.return_value = MagicMock()
+        with patch("wherobots.db.driver.Connection") as mock_conn:
+            connect(api_key="test-key", session_key="k")
+        _, conn_kwargs = mock_conn.call_args
+        assert conn_kwargs["session_key"] == "k"
+        assert callable(conn_kwargs["session_stopper"])
 
 
 class TestConnectRegionRuntime:
