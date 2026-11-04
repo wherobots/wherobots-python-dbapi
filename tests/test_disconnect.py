@@ -836,6 +836,17 @@ def test_real_websocket_stalled_send_is_interrupted_by_close(tls, tmp_path):
         local = client_context.wrap_socket(local, server_hostname="localhost")
         peer = peers.get(timeout=3)
         handshake.join(timeout=3)
+        # Read the server's TLS 1.3 session tickets before any thread starts, as
+        # the websocket opening handshake does on a real connection. OpenSSL
+        # handles them inside SSL_read; handling them while the sender below is
+        # in SSL_write, then aborting the socket, crashed the interpreter at
+        # random (WBC-1678).
+        local.setblocking(False)
+        try:
+            local.recv(1)
+        except ssl.SSLWantReadError:
+            pass
+        local.setblocking(True)
     protocol = ClientProtocol(parse_uri("ws://localhost"), state=State.OPEN)
     ws = ClientConnection(local, protocol)
     conn = Connection(ws)
