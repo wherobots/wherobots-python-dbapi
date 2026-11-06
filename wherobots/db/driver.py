@@ -131,6 +131,7 @@ def connect(
     stale_query_probe_seconds: Union[float, None] = DEFAULT_STALE_QUERY_PROBE_SECONDS,
     session_key: Union[str, None] = None,
     reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+    session_key_exclusive: bool = False,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -169,11 +170,18 @@ def connect(
         it can't reconnect in time do they fail, with ``ConnectionLostError``.
         ``None`` disables reconnecting, as does an invalid value (non-numeric,
         non-finite, or not positive): pending queries then fail at once.
+    :param session_key_exclusive: Keeps this connection's session to its
+        ``session_key`` even over a quota: the API never shares it with
+        another key, so the connection can stop it without cutting off
+        another client. Requires ``session_key``. The connection's
+        ``session_key_exclusive`` says whether the API did.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
     if token and api_key:
         raise ValueError("`token` and `api_key` can't be both provided")
+    if session_key_exclusive and session_key is None:
+        raise ValueError("`session_key_exclusive` requires a `session_key`")
 
     headers = gen_user_agent_header()
     # Merge caller-supplied headers first so the driver's own auth headers,
@@ -221,6 +229,8 @@ def connect(
     }
     if session_key is not None:
         body["sessionKey"] = session_key
+    if session_key_exclusive:
+        body["sessionKeyExclusive"] = True
 
     try:
         resp = requests.post(
@@ -316,6 +326,11 @@ def connect(
     session_key_on_api = (
         api_payload.get("sessionKey") if isinstance(api_payload, dict) else None
     )
+    # Only the API's word counts: an API without key-exclusive sessions
+    # ignores the request's flag.
+    session_key_exclusive_on_api = (
+        isinstance(api_payload, dict) and api_payload.get("sessionKeyExclusive") is True
+    )
     # Snapshot the headers, as for reconnecting: a stop sends what this
     # connection sent even if the caller later mutates them.
     stop_headers = dict(headers)
@@ -343,6 +358,7 @@ def connect(
         reconnect_timeout_seconds=reconnect_timeout_seconds,
         session_key=session_key_on_api,
         session_stopper=stop_session,
+        session_key_exclusive=session_key_exclusive_on_api,
     )
 
 
@@ -376,6 +392,7 @@ def connect_direct(
     reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     session_key: str | None = None,
     session_stopper: Union[Callable[[], None], None] = None,
+    session_key_exclusive: bool = False,
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
@@ -390,6 +407,7 @@ def connect_direct(
     :param session_stopper: Asks the API to stop the SQL session; see
         :meth:`Connection.stop_session`. ``connect()`` supplies it. Without it,
         the connection can't stop its session.
+    :param session_key_exclusive: See :attr:`Connection.session_key_exclusive`.
     """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -466,4 +484,5 @@ def connect_direct(
         reconnect_timeout_seconds=reconnect_timeout_seconds,
         session_key=session_key,
         session_stopper=session_stopper,
+        session_key_exclusive=session_key_exclusive,
     )

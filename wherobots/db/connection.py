@@ -288,6 +288,7 @@ class Connection:
         reconnect_timeout_seconds: float | None = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
         session_key: str | None = None,
         session_stopper: Callable[[], None] | None = None,
+        session_key_exclusive: bool = False,
     ):
         """
         :param transport_factory: Opens a new WebSocket to the same SQL session, given
@@ -303,6 +304,7 @@ class Connection:
         :param session_stopper: Asks the API to stop this connection's SQL session,
             raising ``InterfaceError`` if it can't. Without it, :meth:`stop_session`
             raises ``NotSupportedError``.
+        :param session_key_exclusive: See :attr:`session_key_exclusive`.
         """
         self.__ws = ws
         self.__transport_factory = transport_factory
@@ -350,6 +352,7 @@ class Connection:
         self.__session_id = session_id
         self.__session_fallback = session_fallback
         self.__session_key = session_key
+        self.__session_key_exclusive = session_key_exclusive
         self.__session_stopper = session_stopper
         self.__lock = threading.Lock()
         self.__send_lock = threading.Lock()
@@ -388,14 +391,25 @@ class Connection:
         ``connect_direct()``, which never asks the API."""
         return self.__session_key
 
+    @property
+    def session_key_exclusive(self) -> bool:
+        """Whether the API keeps this connection's SQL session to its
+        :attr:`session_key`: it never shares the session with another key,
+        even over a quota, as ``connect(session_key_exclusive=True)`` asks.
+        True only when the API reports it, so False also for an API that
+        predates key-exclusive sessions, and for a connection from
+        ``connect_direct()``."""
+        return self.__session_key_exclusive
+
     def stop_session(self) -> None:
         """Close this connection, then ask the API to stop its SQL session.
 
         The session stops within seconds instead of after its inactivity
         timeout, for every connection on it: another connection that shares
-        the session loses it too. Check :attr:`session_key` first if other
-        clients may share it. Stopping a session that already stopped
-        succeeds.
+        the session loses it too. Unless :attr:`session_key_exclusive` is
+        True, another client may have been given the session over a quota,
+        even when :attr:`session_key` is your own key. Stopping a session
+        that already stopped succeeds.
 
         :raises NotSupportedError: The connection came from
             ``connect_direct()``, which has no API to ask. The connection

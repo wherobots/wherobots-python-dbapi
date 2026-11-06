@@ -116,6 +116,31 @@ class TestConnectSessionKey:
         kwargs = _run_connect(mock_post, mock_get)
         assert "sessionKey" not in kwargs["json"]
 
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_key_exclusive_is_sent_in_the_body(self, mock_post, mock_get):
+        kwargs = _run_connect(
+            mock_post, mock_get, session_key="dbt-run-1", session_key_exclusive=True
+        )
+        assert kwargs["json"]["sessionKey"] == "dbt-run-1"
+        assert kwargs["json"]["sessionKeyExclusive"] is True
+
+    @pytest.mark.parametrize("session_key", ["dbt-run-1", None])
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_key_exclusive_is_not_sent_unless_asked_for(
+        self, mock_post, mock_get, session_key
+    ):
+        """A request without it is the same as before it existed."""
+        kwargs = _run_connect(mock_post, mock_get, session_key=session_key)
+        assert "sessionKeyExclusive" not in kwargs["json"]
+
+    @patch("wherobots.db.driver.requests.post")
+    def test_session_key_exclusive_requires_a_session_key(self, mock_post):
+        with pytest.raises(ValueError, match="session_key"):
+            connect(api_key="test-key", session_key_exclusive=True)
+        mock_post.assert_not_called()
+
     @pytest.mark.parametrize(
         ("redirect_headers", "fallback"),
         [
@@ -194,6 +219,39 @@ class TestStopSession:
         )
         assert cd_kwargs["session_key"] == session_key
 
+    @pytest.mark.parametrize(
+        ("api_payload", "exclusive"),
+        [
+            ({"sessionKey": "dbt-run-1", "sessionKeyExclusive": True}, True),
+            ({"sessionKey": "dbt-run-1", "sessionKeyExclusive": False}, False),
+            ({"sessionKey": "dbt-run-1", "sessionKeyExclusive": "true"}, False),
+            ({"sessionKey": "dbt-run-1"}, False),
+            (None, False),
+        ],
+        ids=[
+            "kept to its key",
+            "not kept",
+            "not a boolean",
+            "older API",
+            "no stored request",
+        ],
+    )
+    @patch("wherobots.db.driver.requests.get")
+    @patch("wherobots.db.driver.requests.post")
+    def test_whether_the_api_keeps_the_session_to_its_key_reaches_the_connection(
+        self, mock_post, mock_get, api_payload, exclusive
+    ):
+        """Only the API's word counts, never what the request asked for: an
+        API without key-exclusive sessions ignores the request's flag."""
+        _, cd_kwargs = _run_connect_full(
+            mock_post,
+            mock_get,
+            api_payload=api_payload,
+            session_key="dbt-run-1",
+            session_key_exclusive=True,
+        )
+        assert cd_kwargs["session_key_exclusive"] is exclusive
+
     @patch("wherobots.db.driver.requests.delete")
     @patch("wherobots.db.driver.requests.get")
     @patch("wherobots.db.driver.requests.post")
@@ -235,12 +293,17 @@ class TestStopSession:
         self, mock_post, mock_get, mock_ws
     ):
         """Through the real connect_direct, not around it."""
-        _mock_ready_session(mock_post, mock_get, api_payload={"sessionKey": "k"})
+        _mock_ready_session(
+            mock_post,
+            mock_get,
+            api_payload={"sessionKey": "k", "sessionKeyExclusive": True},
+        )
         mock_ws.return_value = MagicMock()
         with patch("wherobots.db.driver.Connection") as mock_conn:
-            connect(api_key="test-key", session_key="k")
+            connect(api_key="test-key", session_key="k", session_key_exclusive=True)
         _, conn_kwargs = mock_conn.call_args
         assert conn_kwargs["session_key"] == "k"
+        assert conn_kwargs["session_key_exclusive"] is True
         assert callable(conn_kwargs["session_stopper"])
 
 
