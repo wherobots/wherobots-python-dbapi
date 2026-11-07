@@ -930,6 +930,19 @@ def test_connection_reports_the_session_key_it_was_given():
         plain.close()
 
 
+def test_connection_reports_whether_its_session_is_kept_to_its_key():
+    conn = Connection(Transport(), session_key="dbt-run-1", session_key_exclusive=True)
+    try:
+        assert conn.session_key_exclusive is True
+    finally:
+        conn.close()
+    plain = Connection(Transport(), session_key="dbt-run-1")
+    try:
+        assert plain.session_key_exclusive is False
+    finally:
+        plain.close()
+
+
 def test_stop_session_closes_the_connection_then_asks_the_api():
     ws = Transport()
     closed_when_asked = []

@@ -254,11 +254,11 @@ seconds:
 
 ```python
 run_key = f"nightly-build-{run_id}"  # unique to this run of the job
-conn = connect(api_key=..., session_key=run_key)
+conn = connect(api_key=..., session_key=run_key, session_key_exclusive=True)
 try:
     ...  # run the job's queries
 finally:
-    if conn.session_key == run_key:
+    if conn.session_key == run_key and conn.session_key_exclusive:
         conn.stop_session()
     else:
         conn.close()
@@ -267,11 +267,21 @@ finally:
 The session stops for every connection on it, so stop only a session no
 other client uses. Every connection that asks with the same `session_key`
 can share a session, so give each run of the job a key of its own, for
-example one that includes a run ID. Then check `conn.session_key` before
-stopping: it's the key the API created the session under. It equals your
-key when the API kept the run on its own sessions, it's `None` for a
-session without a key, and it differs from your key when the API shared
-another session (see `session_fallback` below).
+example one that includes a run ID. Over a quota, the API can also give
+your session to a connection under another key, and your connection
+can't tell; `session_key_exclusive=True` asks the API to keep the session
+to your key instead. Then check both before stopping:
+
+* `conn.session_key` is the key the API created the session under. It's
+  `None` for a session without a key, and it differs from your key when
+  the API shared another key's session (see `session_fallback` below).
+  It can equal your key on a shared session too: over a quota, the API
+  can give you a session opened under your key without
+  `session_key_exclusive`.
+* `conn.session_key_exclusive` is `True` only when the API reports that
+  it keeps the session to that key. It's `False` from an API that
+  predates key-exclusive sessions, and for a shared session that isn't
+  kept to its key.
 
 `stop_session()` raises `InterfaceError` if the API refuses or can't be
 reached; the connection is closed anyway, and the session stops after its
@@ -359,6 +369,14 @@ users may find useful:
     under another key instead, with or without `session_key`, and the
     connection's `session_fallback` is `"quota"` (it is `None` otherwise).
     `connection.session_id` names the session.
+* `session_key_exclusive`: with `session_key`, keeps this connection's
+    session to that key even over a quota: the API never shares it with a
+    connection under another key, so you can stop it without cutting off
+    another client. Over a quota, the connection itself can still be given
+    a shared session, even one under its own key; `session_fallback` then
+    says so, and `session_key_exclusive` is `False`.
+    `connection.session_key_exclusive` says whether the API kept the
+    session to its key.
 * `stale_query_probe_seconds`: how long a running query may go without
     any message from the SQL session before the driver asks the session
     for its state again, in case the query's completion event was lost.
