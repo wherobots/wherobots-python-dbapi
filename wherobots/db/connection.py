@@ -375,10 +375,12 @@ class Connection:
 
     @property
     def session_fallback(self) -> str | None:
-        """Why the API gave this connection a session under another key than
-        the one it asked for, or None when it did not. ``"quota"``: a session
-        of the key's own would have exceeded a quota, so the connection shares
-        another of the user's sessions."""
+        """Why the API gave this connection a shared session instead of one of
+        its key's own, or None when it did not. ``"quota"``: a session of the
+        key's own would have exceeded a quota, so the connection shares
+        another of the user's sessions: one under another key, or, for
+        ``connect(session_key_exclusive=True)``, one opened under the same key
+        without it."""
         return self.__session_fallback
 
     @property

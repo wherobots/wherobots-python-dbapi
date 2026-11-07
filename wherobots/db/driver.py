@@ -274,7 +274,7 @@ def connect(
     )
     if session_fallback is not None:
         logging.warning(
-            "The API shared a SQL session under another key (%s).", session_fallback
+            "The API gave this connection a shared SQL session (%s).", session_fallback
         )
 
     @tenacity.retry(

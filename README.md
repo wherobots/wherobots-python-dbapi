@@ -272,10 +272,12 @@ your session to a connection under another key, and your connection
 can't tell; `session_key_exclusive=True` asks the API to keep the session
 to your key instead. Then check both before stopping:
 
-* `conn.session_key` is the key the API created the session under. It
-  equals your key when the API kept the run on its own sessions, it's
+* `conn.session_key` is the key the API created the session under. It's
   `None` for a session without a key, and it differs from your key when
-  the API shared another session (see `session_fallback` below).
+  the API shared another key's session (see `session_fallback` below).
+  It can equal your key on a shared session too: over a quota, the API
+  can give you a session opened under your key without
+  `session_key_exclusive`.
 * `conn.session_key_exclusive` is `True` only when the API reports that
   it keeps the session to that key. It's `False` from an API that
   predates key-exclusive sessions, and for a shared session that isn't
@@ -371,7 +373,8 @@ users may find useful:
     session to that key even over a quota: the API never shares it with a
     connection under another key, so you can stop it without cutting off
     another client. Over a quota, the connection itself can still be given
-    another key's session, and `session_fallback` says so.
+    a shared session, even one under its own key; `session_fallback` then
+    says so, and `session_key_exclusive` is `False`.
     `connection.session_key_exclusive` says whether the API kept the
     session to its key.
 * `stale_query_probe_seconds`: how long a running query may go without
