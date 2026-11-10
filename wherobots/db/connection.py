@@ -31,6 +31,7 @@ from .errors import (
     InterfaceError,
     NotSupportedError,
     OperationalError,
+    ProgrammingError,
 )
 from .models import ExecutionResult, ProgressInfo, Store, StoreResult
 from .types import (
@@ -473,7 +474,7 @@ class Connection:
         raise NotSupportedError
 
     def cursor(self) -> Cursor:
-        return Cursor(self.__execute_sql, self.__cancel_query)
+        return Cursor(self.__execute_sql, self.__cancel_query, self.__attach_query)
 
     def set_progress_handler(self, handler: ProgressHandler | None) -> None:
         """Register a callback invoked for execution progress events.
@@ -1255,6 +1256,11 @@ class Connection:
                         raise self.__connection_error(query.execution_id)
                     return True
                 if query is not None:
+                    if query.execution_id in self.__queries:
+                        raise ProgrammingError(
+                            f"Execution {query.execution_id} is already tracked "
+                            "by this connection"
+                        )
                     # The watchdog's clock starts at registration.
                     watch = query.watch
                     watch.last_activity = watch.last_event = time.monotonic()
@@ -1369,6 +1375,25 @@ class Connection:
                 state=ExecutionState.EXECUTION_REQUESTED,
                 handler=handler,
                 store=store,
+            ),
+        )
+        return execution_id
+
+    def __attach_query(
+        self,
+        execution_id: str,
+        handler: Callable[[Any], None],
+        store: Store | None = None,
+    ) -> str:
+        self.__send(
+            self.__retrieve_request(execution_id, attach=True),
+            Query(
+                sql="",
+                execution_id=execution_id,
+                state=ExecutionState.RESULTS_REQUESTED,
+                handler=handler,
+                store=store,
+                attach=_Attach(),
             ),
         )
         return execution_id

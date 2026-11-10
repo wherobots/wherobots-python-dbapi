@@ -243,6 +243,13 @@ including whether a write committed, is unknown. The error's
 (When `execute()` itself raises `ConnectionLostError`, the connection was
 already lost and the statement was never sent.)
 
+To restore a known execution on a new connection, connect to its original SQL
+session and call `cursor.attach(execution_id, store=original_store)`. Fetch or
+cancel it through that cursor as usual. Attaching sends no SQL, never creates
+an execution, and does not extend server result retention. It raises the same
+missing/cancelled execution errors described above. A second cursor cannot
+attach an execution already tracked by that connection.
+
 ### Stopping the SQL session
 
 Closing a connection leaves its SQL session running until
