@@ -965,6 +965,81 @@ def test_duplicate_attach_preserves_the_original_cursor():
         conn.close()
 
 
+@pytest.mark.parametrize("completed", [False, True])
+def test_duplicate_attach_preserves_the_replaced_execution(completed):
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        original = conn.cursor()
+        original.attach("execution-a")
+        other = conn.cursor()
+        other.attach("execution-b")
+        assert wait_until(lambda: len(session.retrieves()) == 2)
+
+        def finish_original():
+            session.incoming.put(
+                cbor2.dumps(
+                    {
+                        "kind": "execution_result",
+                        "execution_id": "execution-a",
+                        "state": "succeeded",
+                        "results": arrow_results(x=[7]),
+                    }
+                )
+            )
+
+        if completed:
+            finish_original()
+            assert outcome(original).error is None
+            assert original.fetchall()["x"].tolist() == [7]
+
+        with pytest.raises(ProgrammingError, match="already tracked"):
+            original.attach("execution-b")
+
+        assert original.execution_id == "execution-a"
+        assert session.requests("cancel") == []
+        assert len(session.retrieves()) == 2
+        if not completed:
+            finish_original()
+            assert outcome(original).error is None
+        assert original.fetchall()["x"].tolist() == [7]
+    finally:
+        conn.close()
+
+
+def test_successful_attach_replaces_the_pending_execution():
+    def on_retrieve(session, message):
+        if message["execution_id"] == "execution-a":
+            answer(session, message, "running", attached=True)
+        else:
+            session.incoming.put(
+                cbor2.dumps(
+                    {
+                        "kind": "execution_result",
+                        "execution_id": "execution-b",
+                        "state": "succeeded",
+                        "results": arrow_results(x=[8]),
+                        "attached": True,
+                    }
+                )
+            )
+
+    session = Session(on_retrieve=on_retrieve)
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach("execution-a")
+        cursor.attach("execution-b")
+        assert outcome(cursor).error is None
+        assert cursor.execution_id == "execution-b"
+        assert cursor.fetchall()["x"].tolist() == [8]
+        assert [m["execution_id"] for _, m in session.requests("cancel")] == [
+            "execution-a"
+        ]
+    finally:
+        conn.close()
+
+
 def test_new_cursor_attach_on_old_session_polls_without_replaying():
     def on_retrieve(s, m):
         if len(s.retrieves()) == 1:

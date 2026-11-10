@@ -207,10 +207,12 @@ class Cursor:
             raise NotSupportedError("This cursor does not support attaching executions")
         if self.__in_flight_execution_id() == execution_id:
             raise ProgrammingError("This cursor already tracks the execution")
+        # Preserve the current execution until the new attachment is accepted.
+        results: queue.Queue[ExecutionResult] = queue.Queue()
+        attached_id = self.__attach_fn(execution_id, results.put, store)
         self.__reset_execution()
-        self.__current_execution_id = self.__attach_fn(
-            execution_id, self.__queue.put, store
-        )
+        self.__queue = results
+        self.__current_execution_id = attached_id
 
     def __reset_execution(self) -> None:
         in_flight = self.__in_flight_execution_id()
