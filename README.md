@@ -250,6 +250,15 @@ an execution, and does not extend server result retention. It raises the same
 missing/cancelled execution errors described above. A second cursor cannot
 attach an execution already tracked by that connection.
 
+On SQL sessions that support attachment, attaching a running execution
+transfers event delivery to the new connection, even if the previous
+connection remains open. The duplicate guard
+only covers cursors on one connection. Another connection can attach again and
+take event delivery back. The previous connection can also still cancel the
+execution, including through cursor close or reuse. Callers must coordinate the
+handoff so stale workers cannot reattach or cancel it; attach provides no
+cross-connection lock or ownership fencing.
+
 ### Stopping the SQL session
 
 Closing a connection leaves its SQL session running until
