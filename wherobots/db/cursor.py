@@ -1,9 +1,9 @@
 import math
 import queue
 import re
-from typing import Any, List, Tuple, Dict
+from typing import Any, Callable, List, Tuple, Dict
 
-from .errors import ProgrammingError
+from .errors import NotSupportedError, ProgrammingError
 from .models import ExecutionResult, Store, StoreResult
 
 # Matches pyformat parameter markers: %(name)s
@@ -67,9 +67,16 @@ _TYPE_MAP = {
 
 
 class Cursor:
-    def __init__(self, exec_fn, cancel_fn) -> None:
+    def __init__(
+        self,
+        exec_fn,
+        cancel_fn,
+        attach_fn: Callable[[str, Callable[[ExecutionResult], None], Store | None], str]
+        | None = None,
+    ) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
+        self.__attach_fn = attach_fn
 
         self.__queue: queue.Queue = queue.Queue()
         self.__results: list[Any] | None = None
@@ -180,6 +187,34 @@ class Cursor:
         parameters: Dict[str, Any] | None = None,
         store: Store | None = None,
     ) -> None:
+        self.__reset_execution()
+        self.__current_execution_id = self.__exec_fn(
+            _substitute_parameters(operation, parameters),
+            self.__queue.put,
+            store,
+        )
+
+    def attach(self, execution_id: str, store: Store | None = None) -> None:
+        """Retrieve an existing execution on this connection's SQL session.
+
+        Connect to the original SQL session first. Pass the original Store for
+        stored results. This never submits SQL or extends server result retention;
+        a missing execution raises ExecutionNotFoundError when fetching.
+        """
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ProgrammingError("execution_id must be a non-empty string")
+        if self.__attach_fn is None:
+            raise NotSupportedError("This cursor does not support attaching executions")
+        if self.__in_flight_execution_id() == execution_id:
+            raise ProgrammingError("This cursor already tracks the execution")
+        # Preserve the current execution until the new attachment is accepted.
+        results: queue.Queue[ExecutionResult] = queue.Queue()
+        attached_id = self.__attach_fn(execution_id, results.put, store)
+        self.__reset_execution()
+        self.__queue = results
+        self.__current_execution_id = attached_id
+
+    def __reset_execution(self) -> None:
         in_flight = self.__in_flight_execution_id()
         if in_flight:
             self.__cancel_fn(in_flight)
@@ -199,11 +234,6 @@ class Cursor:
         # A rejected submission must not leave the previous execution ID paired
         # with this new empty queue (which would make a later fetch wait forever).
         self.__current_execution_id = None
-        self.__current_execution_id = self.__exec_fn(
-            _substitute_parameters(operation, parameters),
-            self.__queue.put,
-            store,
-        )
 
     def get_store_result(self) -> StoreResult | None:
         """Get the store result for the last executed query.

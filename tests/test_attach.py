@@ -16,6 +16,7 @@ from wherobots.db import (
     ExecutionCancelledError,
     ExecutionNotFoundError,
     OperationalError,
+    ProgrammingError,
 )
 from wherobots.db.connection import Connection
 from wherobots.db.models import Store, StoreResult
@@ -826,5 +827,263 @@ def test_transport_lost_again_without_reconnecting_raises_connection_lost():
         error = outcome(cursor).error
         assert isinstance(error, ConnectionLostError)
         assert error.execution_id == EID
+    finally:
+        conn.close()
+
+
+# Public reattachment from a new client process.
+
+
+def test_new_cursor_attaches_completed_rows_without_executing_sql():
+    session = Session(
+        on_retrieve=lambda s, m: s.incoming.put(
+            cbor2.dumps(
+                {
+                    "kind": "execution_result",
+                    "execution_id": m["execution_id"],
+                    "state": "succeeded",
+                    "results": arrow_results(x=[1, 2]),
+                    "attached": True,
+                }
+            )
+        )
+    )
+    conn = open_connection(session, results_format=ResultsFormat.ARROW)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID)
+        assert cursor.execution_id == EID
+        assert outcome(cursor).error is None
+        assert cursor.fetchall()["x"].tolist() == [1, 2]
+        assert session.retrieves() == [
+            {
+                "kind": "retrieve_results",
+                "execution_id": EID,
+                "attach": True,
+                "format": "arrow",
+            }
+        ]
+        assert session.requests("execute_sql") == []
+        assert tracked(conn, EID) is None
+    finally:
+        conn.close()
+
+
+def test_new_cursor_attaches_running_stored_query():
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert wait_until(lambda: len(session.retrieves()) == 1)
+        session.put(
+            kind="state_updated",
+            execution_id=EID,
+            state="succeeded",
+            result_uri=RESULT_URI,
+            size=42,
+        )
+        assert outcome(cursor).store_result == StoreResult(RESULT_URI, size=42)
+        assert cursor.get_store_result().result_uri == RESULT_URI
+        assert session.requests("execute_sql") == []
+    finally:
+        conn.close()
+
+
+def test_new_cursor_missing_execution_is_not_resubmitted():
+    session = Session(
+        on_retrieve=lambda s, m: s.put(
+            kind="error",
+            execution_id=m["execution_id"],
+            message=NOT_FOUND,
+        )
+    )
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID)
+        assert isinstance(outcome(cursor).error, ExecutionNotFoundError)
+        with pytest.raises(ExecutionNotFoundError):
+            cursor.fetchall()
+        assert session.requests("execute_sql") == []
+    finally:
+        conn.close()
+
+
+def test_new_cursor_can_cancel_the_attached_execution():
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
+        cursor.close()
+        assert [m["execution_id"] for _, m in session.requests("cancel")] == [EID]
+        session.put(kind="state_updated", execution_id=EID, state="cancelled")
+        assert outcome(cursor).error is None
+        assert session.requests("execute_sql") == []
+    finally:
+        conn.close()
+
+
+def test_new_cursor_does_not_report_previously_cancelled_write_as_success():
+    conn = open_connection(new_session("cancelled"))
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert_cancelled_elsewhere(outcome(cursor).error)
+    finally:
+        conn.close()
+
+
+def test_duplicate_attach_preserves_the_original_cursor():
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        original = conn.cursor()
+        original.attach(EID)
+        assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
+        with pytest.raises(ProgrammingError, match="already tracked"):
+            conn.cursor().attach(EID)
+        with pytest.raises(ProgrammingError, match="already tracks"):
+            original.attach(EID)
+        assert session.requests("cancel") == []
+        session.incoming.put(
+            cbor2.dumps(
+                {
+                    "kind": "execution_result",
+                    "execution_id": EID,
+                    "state": "succeeded",
+                    "results": arrow_results(x=[7]),
+                }
+            )
+        )
+        assert outcome(original).error is None
+        assert original.fetchall()["x"].tolist() == [7]
+        assert len(session.retrieves()) == 1
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_duplicate_attach_preserves_the_replaced_execution(completed):
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        original = conn.cursor()
+        original.attach("execution-a")
+        other = conn.cursor()
+        other.attach("execution-b")
+        assert wait_until(lambda: len(session.retrieves()) == 2)
+
+        def finish_original():
+            session.incoming.put(
+                cbor2.dumps(
+                    {
+                        "kind": "execution_result",
+                        "execution_id": "execution-a",
+                        "state": "succeeded",
+                        "results": arrow_results(x=[7]),
+                    }
+                )
+            )
+
+        if completed:
+            finish_original()
+            assert outcome(original).error is None
+            assert original.fetchall()["x"].tolist() == [7]
+
+        with pytest.raises(ProgrammingError, match="already tracked"):
+            original.attach("execution-b")
+
+        assert original.execution_id == "execution-a"
+        assert session.requests("cancel") == []
+        assert len(session.retrieves()) == 2
+        if not completed:
+            finish_original()
+            assert outcome(original).error is None
+        assert original.fetchall()["x"].tolist() == [7]
+    finally:
+        conn.close()
+
+
+def test_successful_attach_replaces_the_pending_execution():
+    def on_retrieve(session, message):
+        if message["execution_id"] == "execution-a":
+            answer(session, message, "running", attached=True)
+        else:
+            session.incoming.put(
+                cbor2.dumps(
+                    {
+                        "kind": "execution_result",
+                        "execution_id": "execution-b",
+                        "state": "succeeded",
+                        "results": arrow_results(x=[8]),
+                        "attached": True,
+                    }
+                )
+            )
+
+    session = Session(on_retrieve=on_retrieve)
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach("execution-a")
+        cursor.attach("execution-b")
+        assert outcome(cursor).error is None
+        assert cursor.execution_id == "execution-b"
+        assert cursor.fetchall()["x"].tolist() == [8]
+        assert [m["execution_id"] for _, m in session.requests("cancel")] == [
+            "execution-a"
+        ]
+    finally:
+        conn.close()
+
+
+def test_new_cursor_attach_on_old_session_polls_without_replaying():
+    def on_retrieve(s, m):
+        if len(s.retrieves()) == 1:
+            answer(s, m, "running")
+        else:
+            answer(s, m, "succeeded", result_uri=RESULT_URI, size=3)
+
+    session = Session(on_retrieve=on_retrieve)
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert outcome(cursor).store_result.result_uri == RESULT_URI
+        assert len(session.retrieves()) >= 2
+        assert session.requests("execute_sql") == []
+    finally:
+        conn.close()
+
+
+def test_new_cursor_attach_survives_another_transport_loss():
+    first = new_session("running")
+    second = new_session("succeeded", result_uri=RESULT_URI, size=3)
+    conn = open_connection(first, transport_factory=lambda timeout: second)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID, store=STORE)
+        assert wait_until(lambda: tracked(conn, EID).state == ExecutionState.RUNNING)
+        first.incoming.put(ConnectionClosedError(None, None))
+        assert outcome(cursor).store_result.result_uri == RESULT_URI
+        assert first.requests("execute_sql") == second.requests("execute_sql") == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("execution_id", [None, "", "  ", 12])
+def test_attach_rejects_invalid_ids_without_touching_an_existing_cursor(execution_id):
+    session = new_session("running")
+    conn = open_connection(session)
+    try:
+        cursor = conn.cursor()
+        cursor.attach(EID)
+        with pytest.raises(ProgrammingError, match="non-empty string"):
+            cursor.attach(execution_id)
+        assert cursor.execution_id == EID
+        assert session.requests("cancel") == []
     finally:
         conn.close()
