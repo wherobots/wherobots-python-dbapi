@@ -200,6 +200,8 @@ class Cursor:
         Connect to the original SQL session first. Pass the original Store for
         stored results. This never submits SQL or extends server result retention;
         a missing execution raises ExecutionNotFoundError when fetching.
+        On SQL sessions that support attachment, this transfers event ownership.
+        It does not fence other connections; callers must coordinate the handoff.
         """
         if not isinstance(execution_id, str) or not execution_id.strip():
             raise ProgrammingError("execution_id must be a non-empty string")
