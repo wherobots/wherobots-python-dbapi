@@ -21,6 +21,7 @@ from .constants import (
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     DEFAULT_STALE_QUERY_PROBE_SECONDS,
+    OWNERSHIP_SUBPROTOCOL,
 )
 from ._transport import abort_connection, socket_writable
 from .cursor import Cursor
@@ -28,12 +29,19 @@ from .errors import (
     ConnectionLostError,
     ExecutionCancelledError,
     ExecutionNotFoundError,
+    ExecutionOwnershipError,
     InterfaceError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
 )
-from .models import ExecutionResult, ProgressInfo, Store, StoreResult
+from .models import (
+    ExecutionOwnership,
+    ExecutionResult,
+    ProgressInfo,
+    Store,
+    StoreResult,
+)
 from .types import (
     RequestKind,
     EventKind,
@@ -237,6 +245,7 @@ class Query:
     state: ExecutionState
     handler: Callable[[Any], None]
     store: Store | None = None
+    ownership: ExecutionOwnership | None = None
     watch: _Watch = field(default_factory=_Watch)
     attach: _Attach | None = None
     """Set once the query is re-attached after reconnecting."""
@@ -290,6 +299,7 @@ class Connection:
         session_key: str | None = None,
         session_stopper: Callable[[], None] | None = None,
         session_key_exclusive: bool = False,
+        require_execution_ownership: bool = False,
     ):
         """
         :param transport_factory: Opens a new WebSocket to the same SQL session, given
@@ -308,6 +318,10 @@ class Connection:
         :param session_key_exclusive: See :attr:`session_key_exclusive`.
         """
         self.__ws = ws
+        if require_execution_ownership and ws.subprotocol != OWNERSHIP_SUBPROTOCOL:
+            ws.close()
+            raise InterfaceError("SQL session does not support execution ownership")
+        self.__require_execution_ownership = require_execution_ownership
         self.__transport_factory = transport_factory
         self.__reconnect_within = (
             _positive_seconds(reconnect_timeout_seconds)
@@ -742,7 +756,7 @@ class Connection:
                     query.state = ExecutionState.RESULTS_REQUESTED
                     query.watch = _Watch()
                     query.attach = _Attach()
-                cancelled = [q.execution_id for q in pending if q.cancel_requested]
+                cancelled = [query for query in pending if query.cancel_requested]
         if closed:
             try:
                 abort_connection(ws)
@@ -756,12 +770,9 @@ class Connection:
             len(pending),
         )
         requests = [
-            self.__retrieve_request(query.execution_id, attach=True)
+            self.__retrieve_request(query.execution_id, query.ownership, attach=True)
             for query in pending
-        ] + [
-            {"kind": RequestKind.CANCEL.value, "execution_id": execution_id}
-            for execution_id in cancelled
-        ]
+        ] + [self.__cancel_request(query) for query in cancelled]
         try:
             for request in requests:
                 ws.send(json.dumps(request))
@@ -973,11 +984,39 @@ class Connection:
 
         # Incoming state transitions are handled here.
         if kind == EventKind.STATE_UPDATED or kind == EventKind.EXECUTION_RESULT:
+            if (
+                kind == EventKind.EXECUTION_RESULT
+                and query.ownership is not None
+                and message.get("ownership_generation") != query.ownership.generation
+            ):
+                fail_attached(
+                    ExecutionOwnershipError(
+                        "SQL session did not confirm execution ownership", execution_id
+                    )
+                )
+                return
             try:
                 query.state = ExecutionState[message["state"].upper()]
                 logging.info("Query %s is now %s.", execution_id, query.state)
             except (KeyError, AttributeError, TypeError) as error:
                 fail_query("interpret", error)
+                return
+
+            if (
+                kind == EventKind.STATE_UPDATED
+                and query.ownership is not None
+                and query.state
+                in (
+                    ExecutionState.SUCCEEDED,
+                    ExecutionState.FAILED,
+                    ExecutionState.CANCELLED,
+                )
+            ):
+                if not query.watch.results_requested:
+                    try:
+                        self.__request_results(execution_id)
+                    except Exception as error:
+                        fail_query("request", error)
                 return
 
             if attach_reply and attach is not None:
@@ -1045,9 +1084,11 @@ class Connection:
                 if (
                     query.store is not None
                     and (results is None or results == {})
-                    and attach is not None
+                    and (attach is not None or query.ownership is not None)
                 ):
-                    if attach.acknowledged:
+                    if query.ownership is not None or (
+                        attach is not None and attach.acknowledged
+                    ):
                         # A session that supports attaching also echoes the
                         # result location, so this is an empty store result.
                         logging.info(
@@ -1112,7 +1153,7 @@ class Connection:
                     query.state = ExecutionState.COMPLETED
                     complete_query(ExecutionResult(results=decoded))
             elif query.state == ExecutionState.CANCELLED:
-                if attach is not None:
+                if attach is not None or query.ownership is not None:
                     with self.__lock:
                         requested = query.cancel_requested
                     if not requested:
@@ -1139,12 +1180,44 @@ class Connection:
                 )
                 complete_query(ExecutionResult(results=pandas.DataFrame()))
             elif query.state == ExecutionState.FAILED:
+                if query.ownership is not None and kind == EventKind.EXECUTION_RESULT:
+                    failure = (
+                        message.get("exception_on_failure") or "SQL execution failed"
+                    )
+                    fail_attached(OperationalError(failure))
                 # Don't do anything here; the ERROR event is coming with more
                 # details.
                 pass
         elif kind == EventKind.ERROR:
             error = message.get("message")
             not_found = error == _EXECUTION_NOT_FOUND
+            if query.ownership is not None:
+                if error == "Protected execution ID already used":
+                    fail_attached(
+                        ExecutionOwnershipError(
+                            "Protected execution ID already used. The original may have run. "
+                            "Verify its outcome before retrying.",
+                            execution_id,
+                        )
+                    )
+                    return
+                if error in (
+                    "Execution ownership claim rejected",
+                    "Execution ownership generation is stale",
+                    "Protected execution ID limit reached",
+                ):
+                    fail_attached(ExecutionOwnershipError(error, execution_id))
+                    return
+                if not_found:
+                    fail_attached(
+                        ExecutionNotFoundError(
+                            f"Protected execution {execution_id} is unavailable. "
+                            "It may already have run. Verify its outcome before retrying.",
+                            session_id=self.__session_id,
+                            execution_id=execution_id,
+                        )
+                    )
+                    return
             if attach_reply and not_found:
                 # Unlike for a probe, there's no terminal event to wait for:
                 # the session doesn't know the execution at all.
@@ -1317,6 +1390,8 @@ class Connection:
         ``statement``; this driver is embedded by other services, so logging it
         -- even at DEBUG -- would leak raw SQL into their log streams (WBC-139).
         """
+        if "ownership" in message:
+            message = {**message, "ownership": "[redacted]"}
         statement = message.get("statement")
         if isinstance(statement, str):
             message = {**message, "statement": redact_sql(statement)}
@@ -1344,14 +1419,24 @@ class Connection:
         sql: str,
         handler: Callable[[Any], None],
         store: Store | None = None,
+        *,
+        ownership: ExecutionOwnership | None = None,
     ) -> str:
         """Triggers the execution of the given SQL query."""
-        execution_id = str(uuid.uuid4())
-        request = {
+        self.__validate_ownership(ownership)
+        execution_id = ownership.execution_id if ownership else str(uuid.uuid4())
+        request: Dict[str, Any] = {
             "kind": RequestKind.EXECUTE_SQL.value,
             "execution_id": execution_id,
             "statement": sql,
         }
+        if ownership is not None:
+            if ownership.generation != 1:
+                raise ProgrammingError("Protected submission requires generation 1")
+            request["ownership"] = {
+                **ownership.claim(),
+                "public_key": ownership.public_key,
+            }
 
         if self.__progress_handler is not None:
             request["enable_progress_events"] = True
@@ -1375,6 +1460,7 @@ class Connection:
                 state=ExecutionState.EXECUTION_REQUESTED,
                 handler=handler,
                 store=store,
+                ownership=ownership,
             ),
         )
         return execution_id
@@ -1384,22 +1470,39 @@ class Connection:
         execution_id: str,
         handler: Callable[[Any], None],
         store: Store | None = None,
+        *,
+        ownership: ExecutionOwnership | None = None,
     ) -> str:
+        self.__validate_ownership(ownership)
+        if ownership is not None and ownership.execution_id != execution_id:
+            raise ProgrammingError("Ownership claim is for a different execution")
         self.__send(
-            self.__retrieve_request(execution_id, attach=True),
+            self.__retrieve_request(execution_id, ownership, attach=True),
             Query(
                 sql="",
                 execution_id=execution_id,
                 state=ExecutionState.RESULTS_REQUESTED,
                 handler=handler,
                 store=store,
+                ownership=ownership,
                 attach=_Attach(),
             ),
         )
         return execution_id
 
+    def __validate_ownership(self, ownership: ExecutionOwnership | None) -> None:
+        if ownership is None:
+            if self.__require_execution_ownership:
+                raise ProgrammingError("An execution ownership claim is required")
+        elif not self.__require_execution_ownership:
+            raise NotSupportedError("Connect with require_execution_ownership=True")
+
     def __retrieve_request(
-        self, execution_id: str, attach: bool = False
+        self,
+        execution_id: str,
+        ownership: ExecutionOwnership | None,
+        *,
+        attach: bool = False,
     ) -> Dict[str, Any]:
         request: Dict[str, Any] = {
             "kind": RequestKind.RETRIEVE_RESULTS.value,
@@ -1413,6 +1516,10 @@ class Connection:
             request["geometry"] = self.__geometry_representation.value
         if attach:
             request["attach"] = True
+        if ownership is not None:
+            request["ownership"] = ownership.claim()
+            if attach:
+                request["ownership"]["public_key"] = ownership.public_key
         return request
 
     def __request_results(
@@ -1428,7 +1535,7 @@ class Connection:
         if not query:
             return True
 
-        request = self.__retrieve_request(execution_id, attach=attach)
+        request = self.__retrieve_request(execution_id, query.ownership, attach=attach)
 
         if not probe:
             # A probe only asks; the reply carries the query's actual state.
@@ -1440,12 +1547,18 @@ class Connection:
     def __cancel_query(self, execution_id: str) -> None:
         """Cancels the query with the given execution ID."""
         with self.__lock:
-            if execution_id not in self.__queries:
+            query = self.__queries.get(execution_id)
+            if query is None:
                 return
-
-        request = {
-            "kind": RequestKind.CANCEL.value,
-            "execution_id": execution_id,
-        }
         logging.info("Cancelling query %s...", execution_id)
-        self.__send(request)
+        self.__send(self.__cancel_request(query))
+
+    @staticmethod
+    def __cancel_request(query: Query) -> Dict[str, Any]:
+        request: Dict[str, Any] = {
+            "kind": RequestKind.CANCEL.value,
+            "execution_id": query.execution_id,
+        }
+        if query.ownership is not None:
+            request["ownership"] = query.ownership.claim()
+        return request

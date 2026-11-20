@@ -7,13 +7,14 @@ from .errors import (
     DatabaseError,
     ExecutionCancelledError,
     ExecutionNotFoundError,
+    ExecutionOwnershipError,
     InternalError,
     InterfaceError,
     OperationalError,
     ProgrammingError,
     NotSupportedError,
 )
-from .models import ProgressInfo, Store, StoreResult
+from .models import ExecutionOwnership, ProgressInfo, Store, StoreResult
 from .region import Region
 from .runtime import Runtime
 from .types import StorageFormat
@@ -32,6 +33,8 @@ __all__ = [
     "ConnectionLostError",
     "ExecutionCancelledError",
     "ExecutionNotFoundError",
+    "ExecutionOwnership",
+    "ExecutionOwnershipError",
     "ProgrammingError",
     "NotSupportedError",
     "Region",

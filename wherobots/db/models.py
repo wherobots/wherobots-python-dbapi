@@ -1,10 +1,53 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from hashlib import sha256
+import re
 from typing import Any, Dict
 
 import pandas
 
 from .constants import DEFAULT_STORAGE_FORMAT
+from .errors import ProgrammingError
 from .types import StorageFormat
+
+
+@dataclass(frozen=True)
+class ExecutionOwnership:
+    """A claim from the coordinator for a preallocated SQL execution ID."""
+
+    execution_id: str
+    generation: int
+    signature: str = field(repr=False)
+    public_key: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.generation, bool)
+            or not isinstance(self.generation, int)
+            or not 1 <= self.generation <= 2**63 - 1
+        ):
+            raise ProgrammingError(
+                "Ownership generation must be a positive 64-bit integer"
+            )
+        if not isinstance(self.signature, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{128}", self.signature
+        ):
+            raise ProgrammingError(
+                "Ownership signature must contain 128 hex characters"
+            )
+        if not isinstance(self.public_key, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", self.public_key
+        ):
+            raise ProgrammingError(
+                "Ownership public key must contain 64 hex characters"
+            )
+        expected_id = "owned_" + sha256(bytes.fromhex(self.public_key)).hexdigest()
+        if self.execution_id != expected_id:
+            raise ProgrammingError(
+                "Execution ID does not match the ownership public key"
+            )
+
+    def claim(self) -> dict[str, str | int]:
+        return {"generation": self.generation, "signature": self.signature}
 
 
 @dataclass(frozen=True)

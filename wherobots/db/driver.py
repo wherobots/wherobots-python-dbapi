@@ -16,6 +16,7 @@ from typing import Any, Callable, Final, Union, Dict
 import urllib.parse
 import websockets.exceptions
 import websockets.sync.client
+from websockets.typing import Subprotocol
 import certifi
 
 from .connection import Connection
@@ -28,6 +29,7 @@ from .constants import (
     DEFAULT_SESSION_WAIT_TIMEOUT_SECONDS,
     DEFAULT_STALE_QUERY_PROBE_SECONDS,
     MAX_MESSAGE_SIZE,
+    OWNERSHIP_SUBPROTOCOL,
     PARAM_STYLE,
     PROTOCOL_VERSION,
     SESSION_FALLBACK_HEADER,
@@ -56,6 +58,12 @@ TRANSIENT_HTTP_STATUS_CODES = {429, 502, 503, 504}
 
 # Default timeout for individual HTTP requests (connect + read), in seconds.
 DEFAULT_HTTP_TIMEOUT = 30
+
+
+class _OwnershipTransportLogger(logging.LoggerAdapter):
+    def isEnabledFor(self, level: int) -> bool:
+        # WebSocket frame tracing includes credentials in the message body.
+        return level >= logging.INFO and super().isEnabledFor(level)
 
 
 def _resolve_dbapi_version() -> str:
@@ -132,6 +140,7 @@ def connect(
     session_key: Union[str, None] = None,
     reconnect_timeout_seconds: Union[float, None] = DEFAULT_RECONNECT_TIMEOUT_SECONDS,
     session_key_exclusive: bool = False,
+    require_execution_ownership: bool = False,
 ) -> Connection:
     """Create a connection to a Wherobots SQL session.
 
@@ -175,6 +184,7 @@ def connect(
         another key, so the connection can stop it without cutting off
         another client. Requires ``session_key``. The connection's
         ``session_key_exclusive`` says whether the API did.
+    :param require_execution_ownership: See :func:`connect_direct`.
     """
     if not token and not api_key:
         raise ValueError("At least one of `token` or `api_key` is required")
@@ -359,6 +369,7 @@ def connect(
         session_key=session_key_on_api,
         session_stopper=stop_session,
         session_key_exclusive=session_key_exclusive_on_api,
+        require_execution_ownership=require_execution_ownership,
     )
 
 
@@ -393,6 +404,7 @@ def connect_direct(
     session_key: str | None = None,
     session_stopper: Union[Callable[[], None], None] = None,
     session_key_exclusive: bool = False,
+    require_execution_ownership: bool = False,
 ) -> Connection:
     """Connect to a SQL session's WebSocket endpoint directly.
 
@@ -408,6 +420,8 @@ def connect_direct(
         :meth:`Connection.stop_session`. ``connect()`` supplies it. Without it,
         the connection can't stop its session.
     :param session_key_exclusive: See :attr:`Connection.session_key_exclusive`.
+    :param require_execution_ownership: Require SQL-session ownership support before
+        sending any SQL. Such connections require a claim on execute and attach.
     """
     uri_with_protocol = f"{uri}/{protocol}"
     ssl_context = ssl.create_default_context()
@@ -418,14 +432,28 @@ def connect_direct(
     ) -> websockets.sync.client.ClientConnection:
         _check_cancelled(cancel_event)
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-        return websockets.sync.client.connect(
+        ws = websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
             open_timeout=open_timeout,
             close_timeout=DEFAULT_CLOSE_TIMEOUT_SECONDS,
             ssl=ssl_context,
+            subprotocols=(
+                [Subprotocol(OWNERSHIP_SUBPROTOCOL)]
+                if require_execution_ownership
+                else None
+            ),
+            logger=(
+                _OwnershipTransportLogger(logging.getLogger("websockets.client"))
+                if require_execution_ownership
+                else None
+            ),
         )
+        if require_execution_ownership and ws.subprotocol != OWNERSHIP_SUBPROTOCOL:
+            ws.close()
+            raise InterfaceError("SQL session does not support execution ownership")
+        return ws
 
     @tenacity.retry(
         stop=tenacity.stop_after_attempt(5),
@@ -485,4 +513,5 @@ def connect_direct(
         session_key=session_key,
         session_stopper=session_stopper,
         session_key_exclusive=session_key_exclusive,
+        require_execution_ownership=require_execution_ownership,
     )
