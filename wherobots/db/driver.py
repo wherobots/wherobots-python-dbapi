@@ -432,7 +432,7 @@ def connect_direct(
     ) -> websockets.sync.client.ClientConnection:
         _check_cancelled(cancel_event)
         logging.info("Connecting to SQL session at %s ...", uri_with_protocol)
-        ws = websockets.sync.client.connect(
+        return websockets.sync.client.connect(
             uri=uri_with_protocol,
             additional_headers=headers,
             max_size=MAX_MESSAGE_SIZE,
@@ -450,10 +450,6 @@ def connect_direct(
                 else None
             ),
         )
-        if require_execution_ownership and ws.subprotocol != OWNERSHIP_SUBPROTOCOL:
-            ws.close()
-            raise InterfaceError("SQL session does not support execution ownership")
-        return ws
 
     @tenacity.retry(
         stop=tenacity.stop_after_attempt(5),

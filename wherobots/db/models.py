@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from hashlib import sha256
 import re
 from typing import Any, Dict
 
@@ -17,7 +16,6 @@ class ExecutionOwnership:
     execution_id: str
     generation: int
     signature: str = field(repr=False)
-    public_key: str
 
     def __post_init__(self) -> None:
         if (
@@ -34,16 +32,11 @@ class ExecutionOwnership:
             raise ProgrammingError(
                 "Ownership signature must contain 128 hex characters"
             )
-        if not isinstance(self.public_key, str) or not re.fullmatch(
-            r"[0-9a-fA-F]{64}", self.public_key
+        if not isinstance(self.execution_id, str) or not re.fullmatch(
+            r"owned_[0-9a-f]{64}", self.execution_id
         ):
             raise ProgrammingError(
-                "Ownership public key must contain 64 hex characters"
-            )
-        expected_id = "owned_" + sha256(bytes.fromhex(self.public_key)).hexdigest()
-        if self.execution_id != expected_id:
-            raise ProgrammingError(
-                "Execution ID does not match the ownership public key"
+                "Protected executions require an owned_ ID with 64 lowercase hex characters"
             )
 
     def claim(self) -> dict[str, str | int]:

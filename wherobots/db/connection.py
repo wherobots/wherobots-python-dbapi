@@ -719,7 +719,21 @@ class Connection:
                 return None
             attempts += 1
             try:
-                return factory(remaining)
+                ws = factory(remaining)
+                if (
+                    self.__require_execution_ownership
+                    and ws.subprotocol != OWNERSHIP_SUBPROTOCOL
+                ):
+                    try:
+                        abort_connection(ws)
+                    except Exception:
+                        logging.debug(
+                            "Could not abort unsupported SQL transport", exc_info=True
+                        )
+                    raise InterfaceError(
+                        "SQL session does not support execution ownership"
+                    )
+                return ws
             except InterfaceError as error:
                 logging.error(
                     "Could not reconnect to SQL session %s: %s", session, error
@@ -1433,10 +1447,7 @@ class Connection:
         if ownership is not None:
             if ownership.generation != 1:
                 raise ProgrammingError("Protected submission requires generation 1")
-            request["ownership"] = {
-                **ownership.claim(),
-                "public_key": ownership.public_key,
-            }
+            request["ownership"] = ownership.claim()
 
         if self.__progress_handler is not None:
             request["enable_progress_events"] = True
@@ -1518,8 +1529,6 @@ class Connection:
             request["attach"] = True
         if ownership is not None:
             request["ownership"] = ownership.claim()
-            if attach:
-                request["ownership"]["public_key"] = ownership.public_key
         return request
 
     def __request_results(

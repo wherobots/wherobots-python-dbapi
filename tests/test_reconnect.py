@@ -7,7 +7,6 @@ import queue
 import threading
 import time
 from unittest.mock import MagicMock, patch
-from hashlib import sha256
 
 import cbor2
 import pandas
@@ -487,31 +486,46 @@ def test_protected_reconnect_preserves_claim_without_replaying_sql(caplog):
     lost = Session()
     again = new_session("running", ownership_generation=1)
     lost.subprotocol = again.subprotocol = OWNERSHIP_SUBPROTOCOL
-    public_key = "01" * 32
-    execution_id = "owned_" + sha256(bytes.fromhex(public_key)).hexdigest()
-    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64, public_key)
+    execution_id = "owned_" + "12" * 32
+    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64)
     conn = open_connection(lost, Factory(again), require_execution_ownership=True)
     try:
         with caplog.at_level(logging.DEBUG):
             cursor = conn.cursor()
             cursor.execute("SELECT 1", ownership=ownership)
-            assert lost.sent[0]["ownership"] == {
-                **ownership.claim(),
-                "public_key": public_key,
-            }
+            assert lost.sent[0]["ownership"] == ownership.claim()
             cursor.close()
             assert lost.sent[-1]["ownership"] == ownership.claim()
             lost.drop()
             assert wait_until(lambda: len(again.sent) >= 2)
         assert again.kinds()[:2] == ["retrieve_results", "cancel"]
         assert again.sent[0]["attach"] is True
-        assert again.sent[0]["ownership"] == {
-            **ownership.claim(),
-            "public_key": public_key,
-        }
+        assert again.sent[0]["ownership"] == ownership.claim()
         assert again.sent[1]["ownership"] == ownership.claim()
         assert not again.requests("execute_sql")
         assert ownership.signature not in caplog.text
+    finally:
+        conn.close()
+
+
+def test_protected_reconnect_rejects_a_replacement_without_ownership_support():
+    lost, replacement = Session(), Session()
+    lost.subprotocol = OWNERSHIP_SUBPROTOCOL
+    replacement.subprotocol = None
+    execution_id = "owned_" + "12" * 32
+    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64)
+    factory = Factory(replacement)
+    conn = open_connection(lost, factory, require_execution_ownership=True)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1", ownership=ownership)
+        lost.drop()
+        error = outcome(cursor).error
+        assert isinstance(error, ConnectionLostError)
+        assert error.execution_id == execution_id
+        assert len(factory.calls) == 1
+        assert not replacement.sent
+        replacement.socket.shutdown.assert_called_once()
     finally:
         conn.close()
 
@@ -520,9 +534,8 @@ def test_protected_reconnect_preserves_claim_without_replaying_sql(caplog):
 def test_protected_terminal_event_requires_authenticated_result(server_generation):
     session = Session()
     session.subprotocol = OWNERSHIP_SUBPROTOCOL
-    public_key = "01" * 32
-    execution_id = "owned_" + sha256(bytes.fromhex(public_key)).hexdigest()
-    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64, public_key)
+    execution_id = "owned_" + "12" * 32
+    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64)
     conn = open_connection(session, Factory(), require_execution_ownership=True)
     try:
         cursor = conn.cursor()
@@ -561,9 +574,8 @@ def test_protected_terminal_event_requires_authenticated_result(server_generatio
 def test_used_protected_id_carries_unknown_outcome():
     session = Session()
     session.subprotocol = OWNERSHIP_SUBPROTOCOL
-    public_key = "01" * 32
-    execution_id = "owned_" + sha256(bytes.fromhex(public_key)).hexdigest()
-    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64, public_key)
+    execution_id = "owned_" + "12" * 32
+    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64)
     conn = open_connection(session, Factory(), require_execution_ownership=True)
     try:
         cursor = conn.cursor()
@@ -583,18 +595,18 @@ def test_used_protected_id_carries_unknown_outcome():
 
 
 @pytest.mark.parametrize(
-    ("generation", "signature", "public_key", "message"),
+    ("generation", "signature", "execution_id", "message"),
     [
-        (True, "ab" * 64, "01" * 32, "generation"),
-        (1, "too short", "01" * 32, "signature"),
-        (1, "ab" * 64, "zz" * 32, "public key"),
+        (True, "ab" * 64, "owned_" + "12" * 32, "generation"),
+        (1, "too short", "owned_" + "12" * 32, "signature"),
+        (1, "ab" * 64, "invalid", "owned_ ID"),
     ],
 )
 def test_malformed_ownership_is_rejected_before_sending(
-    generation, signature, public_key, message
+    generation, signature, execution_id, message
 ):
     with pytest.raises(ProgrammingError, match=message):
-        ExecutionOwnership("unused", generation, signature, public_key)
+        ExecutionOwnership(execution_id, generation, signature)
 
 
 # Giving up
