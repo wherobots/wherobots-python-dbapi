@@ -571,6 +571,29 @@ def test_protected_terminal_event_requires_authenticated_result(server_generatio
         conn.close()
 
 
+def test_protected_failed_query_reports_the_error_in_the_result_reply():
+    session = Session()
+    session.subprotocol = OWNERSHIP_SUBPROTOCOL
+    execution_id = "owned_" + "12" * 32
+    ownership = ExecutionOwnership(execution_id, 1, "ab" * 64)
+    conn = open_connection(session, Factory(), require_execution_ownership=True)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT missing FROM t", ownership=ownership)
+        session.put(kind="state_updated", execution_id=execution_id, state="failed")
+        assert wait_until(lambda: session.requests("retrieve_results", execution_id))
+        session.put(
+            kind="execution_result",
+            execution_id=execution_id,
+            state="failed",
+            exception_on_failure="Column missing does not exist",
+            ownership_generation=1,
+        )
+        assert str(outcome(cursor).error) == "Column missing does not exist"
+    finally:
+        conn.close()
+
+
 def test_used_protected_id_carries_unknown_outcome():
     session = Session()
     session.subprotocol = OWNERSHIP_SUBPROTOCOL

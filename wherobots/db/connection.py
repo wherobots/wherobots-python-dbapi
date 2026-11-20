@@ -1195,13 +1195,12 @@ class Connection:
                 complete_query(ExecutionResult(results=pandas.DataFrame()))
             elif query.state == ExecutionState.FAILED:
                 if query.ownership is not None and kind == EventKind.EXECUTION_RESULT:
+                    # Protected SQL sessions include the cause in this reply.
                     failure = (
                         message.get("exception_on_failure") or "SQL execution failed"
                     )
                     fail_attached(OperationalError(failure))
-                # Don't do anything here; the ERROR event is coming with more
-                # details.
-                pass
+                # Legacy sessions may send the details in a separate ERROR event.
         elif kind == EventKind.ERROR:
             error = message.get("message")
             not_found = error == _EXECUTION_NOT_FOUND
