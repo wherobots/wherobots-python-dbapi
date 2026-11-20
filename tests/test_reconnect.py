@@ -508,6 +508,22 @@ def test_protected_reconnect_preserves_claim_without_replaying_sql(caplog):
         conn.close()
 
 
+def test_protected_connection_aborts_an_unsupported_transport():
+    session = Session()
+    session.subprotocol = None
+    session.close_timeout = None
+    session.socket.shutdown.side_effect = None
+    with (
+        patch.object(session, "close", side_effect=AssertionError("unbounded close")),
+        pytest.raises(InterfaceError, match="does not support execution ownership"),
+    ):
+        open_connection(session, Factory(), require_execution_ownership=True)
+
+    session.socket.shutdown.assert_called_once()
+    session.socket.close.assert_called_once()
+    assert not session.sent
+
+
 def test_protected_reconnect_rejects_a_replacement_without_ownership_support():
     lost, replacement = Session(), Session()
     lost.subprotocol = OWNERSHIP_SUBPROTOCOL

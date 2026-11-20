@@ -60,6 +60,16 @@ class _TransportError(Exception):
     """An I/O failure raised while receiving from the WebSocket."""
 
 
+def _require_ownership_subprotocol(ws: websockets.sync.client.ClientConnection) -> None:
+    if ws.subprotocol == OWNERSHIP_SUBPROTOCOL:
+        return
+    try:
+        abort_connection(ws)
+    except Exception:
+        logging.debug("Could not abort unsupported SQL transport", exc_info=True)
+    raise InterfaceError("SQL session does not support execution ownership")
+
+
 _READER_JOIN_SECONDS = 1.0
 """How long close() waits for the reader thread once teardown has finished."""
 
@@ -318,9 +328,8 @@ class Connection:
         :param session_key_exclusive: See :attr:`session_key_exclusive`.
         """
         self.__ws = ws
-        if require_execution_ownership and ws.subprotocol != OWNERSHIP_SUBPROTOCOL:
-            ws.close()
-            raise InterfaceError("SQL session does not support execution ownership")
+        if require_execution_ownership:
+            _require_ownership_subprotocol(ws)
         self.__require_execution_ownership = require_execution_ownership
         self.__transport_factory = transport_factory
         self.__reconnect_within = (
@@ -720,19 +729,8 @@ class Connection:
             attempts += 1
             try:
                 ws = factory(remaining)
-                if (
-                    self.__require_execution_ownership
-                    and ws.subprotocol != OWNERSHIP_SUBPROTOCOL
-                ):
-                    try:
-                        abort_connection(ws)
-                    except Exception:
-                        logging.debug(
-                            "Could not abort unsupported SQL transport", exc_info=True
-                        )
-                    raise InterfaceError(
-                        "SQL session does not support execution ownership"
-                    )
+                if self.__require_execution_ownership:
+                    _require_ownership_subprotocol(ws)
                 return ws
             except InterfaceError as error:
                 logging.error(

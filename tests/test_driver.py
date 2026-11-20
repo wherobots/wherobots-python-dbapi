@@ -563,7 +563,9 @@ class TestConnectDirectWebSocket:
             "wherobots.execution-ownership.v1"
         ]
         assert not mock_ws.call_args.kwargs["logger"].isEnabledFor(logging.DEBUG)
-        ws.close.assert_called_once()
+        ws.socket.shutdown.assert_called_once()
+        ws.socket.close.assert_called_once()
+        ws.close.assert_not_called()
         ws.send.assert_not_called()
 
     @patch("wherobots.db.driver.websockets.sync.client.connect")
