@@ -26,6 +26,14 @@ class NotSupportedError(DatabaseError):
     pass
 
 
+class ExecutionOwnershipError(OperationalError):
+    """SQL-session rejected or could not confirm the execution ownership claim."""
+
+    def __init__(self, message: str, execution_id: str) -> None:
+        super().__init__(message)
+        self.execution_id = execution_id
+
+
 class ConnectionLostError(OperationalError):
     """The connection to the SQL session was lost while a query was pending.
 

@@ -1,5 +1,6 @@
 """Tests for the connect() and connect_direct() driver functions."""
 
+import logging
 import threading
 import time
 from importlib import metadata
@@ -545,6 +546,28 @@ class TestConnectDirectCancelEvent:
 
 
 class TestConnectDirectWebSocket:
+    @patch("wherobots.db.driver.websockets.sync.client.connect")
+    def test_required_ownership_rejects_older_server_before_submission(self, mock_ws):
+        ws = mock_ws.return_value
+        ws.subprotocol = None
+
+        with pytest.raises(
+            InterfaceError, match="does not support execution ownership"
+        ):
+            connect_direct(
+                uri="wss://compute.example.com/sql/org/session-id",
+                require_execution_ownership=True,
+            )
+
+        assert mock_ws.call_args.kwargs["subprotocols"] == [
+            "wherobots.execution-ownership.v1"
+        ]
+        assert not mock_ws.call_args.kwargs["logger"].isEnabledFor(logging.DEBUG)
+        ws.socket.shutdown.assert_called_once()
+        ws.socket.close.assert_called_once()
+        ws.close.assert_not_called()
+        ws.send.assert_not_called()
+
     @patch("wherobots.db.driver.websockets.sync.client.connect")
     def test_close_handshake_is_bounded(self, mock_ws):
         from websockets.exceptions import ConnectionClosedOK

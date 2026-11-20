@@ -32,3 +32,4 @@ MAX_MESSAGE_SIZE: int = 100 * 2**20  # 100MiB
 PROTOCOL_VERSION: Version = Version("1.0.0")
 
 PARAM_STYLE = "pyformat"
+OWNERSHIP_SUBPROTOCOL = "wherobots.execution-ownership.v1"

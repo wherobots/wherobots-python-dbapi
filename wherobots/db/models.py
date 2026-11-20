@@ -1,10 +1,46 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import re
 from typing import Any, Dict
 
 import pandas
 
 from .constants import DEFAULT_STORAGE_FORMAT
+from .errors import ProgrammingError
 from .types import StorageFormat
+
+
+@dataclass(frozen=True)
+class ExecutionOwnership:
+    """A claim from the coordinator for a preallocated SQL execution ID."""
+
+    execution_id: str
+    generation: int
+    signature: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.generation, bool)
+            or not isinstance(self.generation, int)
+            or not 1 <= self.generation <= 2**63 - 1
+        ):
+            raise ProgrammingError(
+                "Ownership generation must be a positive 64-bit integer"
+            )
+        if not isinstance(self.signature, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{128}", self.signature
+        ):
+            raise ProgrammingError(
+                "Ownership signature must contain 128 hex characters"
+            )
+        if not isinstance(self.execution_id, str) or not re.fullmatch(
+            r"owned_[0-9a-f]{64}", self.execution_id
+        ):
+            raise ProgrammingError(
+                "Protected executions require an owned_ ID with 64 lowercase hex characters"
+            )
+
+    def claim(self) -> dict[str, str | int]:
+        return {"generation": self.generation, "signature": self.signature}
 
 
 @dataclass(frozen=True)
