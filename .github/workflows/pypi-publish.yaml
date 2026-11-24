@@ -21,7 +21,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          version: "0.7.12"
+          version: "0.13.7"
       - name: Compare tag and project version
         run: |
           if [ "v$(uv version | cut -d' ' -f2)" != "${{ github.ref_name }}" ]; then echo "Version mismatch"; exit 1; fi
