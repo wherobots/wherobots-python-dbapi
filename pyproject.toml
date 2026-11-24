@@ -55,3 +55,6 @@ max-line-length = "88"
 [tool.mypy]
 strict = true
 show_error_codes = true
+
+[tool.uv]
+exclude-newer = "14 days"
