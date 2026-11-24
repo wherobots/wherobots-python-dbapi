@@ -1,10 +1,10 @@
 import math
 import queue
 import re
-from typing import Any, Callable, List, Tuple, Dict
+from typing import Any, Callable, List, Tuple, Dict, Protocol
 
 from .errors import NotSupportedError, ProgrammingError
-from .models import ExecutionResult, Store, StoreResult
+from .models import ExecutionOwnership, ExecutionResult, Store, StoreResult
 
 # Matches pyformat parameter markers: %(name)s
 _PYFORMAT_RE = re.compile(r"%\(([^)]+)\)s")
@@ -66,13 +66,25 @@ _TYPE_MAP = {
 }
 
 
+class _AttachCallback(Protocol):
+    def __call__(
+        self,
+        execution_id: str,
+        handler: Callable[[ExecutionResult], None],
+        store: Store | None,
+        /,
+        *,
+        ownership: ExecutionOwnership | None = None,
+    ) -> str:
+        ...
+
+
 class Cursor:
     def __init__(
         self,
         exec_fn,
         cancel_fn,
-        attach_fn: Callable[[str, Callable[[ExecutionResult], None], Store | None], str]
-        | None = None,
+        attach_fn: _AttachCallback | None = None,
     ) -> None:
         self.__exec_fn = exec_fn
         self.__cancel_fn = cancel_fn
@@ -186,22 +198,34 @@ class Cursor:
         operation: str,
         parameters: Dict[str, Any] | None = None,
         store: Store | None = None,
+        *,
+        ownership: ExecutionOwnership | None = None,
     ) -> None:
         self.__reset_execution()
-        self.__current_execution_id = self.__exec_fn(
-            _substitute_parameters(operation, parameters),
-            self.__queue.put,
-            store,
-        )
+        statement = _substitute_parameters(operation, parameters)
+        if ownership is None:
+            self.__current_execution_id = self.__exec_fn(
+                statement, self.__queue.put, store
+            )
+        else:
+            self.__current_execution_id = self.__exec_fn(
+                statement, self.__queue.put, store, ownership=ownership
+            )
 
-    def attach(self, execution_id: str, store: Store | None = None) -> None:
+    def attach(
+        self,
+        execution_id: str,
+        store: Store | None = None,
+        *,
+        ownership: ExecutionOwnership | None = None,
+    ) -> None:
         """Retrieve an existing execution on this connection's SQL session.
 
         Connect to the original SQL session first. Pass the original Store for
         stored results. This never submits SQL or extends server result retention;
         a missing execution raises ExecutionNotFoundError when fetching.
         On SQL sessions that support attachment, this transfers event ownership.
-        It does not fence other connections; callers must coordinate the handoff.
+        For a protected execution, supply the coordinator's ownership claim.
         """
         if not isinstance(execution_id, str) or not execution_id.strip():
             raise ProgrammingError("execution_id must be a non-empty string")
@@ -211,7 +235,12 @@ class Cursor:
             raise ProgrammingError("This cursor already tracks the execution")
         # Preserve the current execution until the new attachment is accepted.
         results: queue.Queue[ExecutionResult] = queue.Queue()
-        attached_id = self.__attach_fn(execution_id, results.put, store)
+        if ownership is None:
+            attached_id = self.__attach_fn(execution_id, results.put, store)
+        else:
+            attached_id = self.__attach_fn(
+                execution_id, results.put, store, ownership=ownership
+            )
         self.__reset_execution()
         self.__queue = results
         self.__current_execution_id = attached_id
